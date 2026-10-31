@@ -1,0 +1,1148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#102033">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Run Sheet">
+<title>Delivery Run Sheet</title>
+<style>
+:root{
+  --ink:#0f1b2d; --ink2:#44526a; --mute:#6b778c; --line:#d9dee7; --bg:#eceff3; --card:#fff;
+  --head:#102033; --head2:#1c3150;
+  --go:#0b7a4b; --go-bg:#e3f4ec; --owe:#a1460a; --owe-bg:#fdf0e3; --bad:#b42318; --bad-bg:#fdecea;
+  --nav:#1d5fc2; --nav-bg:#e6eefb; --wait:#8a6400; --wait-bg:#fff6d6;
+  --safe-top:max(env(safe-area-inset-top,0px),var(--safe-area-inset-top,0px));
+  --safe-bot:max(env(safe-area-inset-bottom,0px),var(--safe-area-inset-bottom,0px));
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+.num{font-variant-numeric:tabular-nums}
+.hidden{display:none!important}
+
+/* header */
+.top{position:sticky;top:0;z-index:30;background:var(--head);color:#fff;padding:calc(var(--safe-top) + 10px) 14px 0}
+.top-row{display:flex;align-items:center;gap:10px;max-width:760px;margin:0 auto}
+.brand{font-weight:800;letter-spacing:.2px;font-size:17px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brand small{display:block;font-weight:600;font-size:12px;color:#9fb3cc;letter-spacing:.3px;text-transform:uppercase}
+.pill{border:0;border-radius:999px;padding:7px 12px;font-size:13px;font-weight:700;display:flex;gap:6px;align-items:center;background:#24405f;color:#d6e4f5}
+.pill.ok{background:#174a35;color:#b9f0d4}.pill.off{background:#6b4a00;color:#ffe9a8}.pill.busy{background:#24405f;color:#d6e4f5}
+.pill .dot{width:8px;height:8px;border-radius:50%;background:currentColor}
+.gear{border:0;background:#24405f;color:#fff;width:40px;height:36px;border-radius:10px;font-size:18px}
+.tabs{display:flex;gap:4px;max-width:760px;margin:10px auto 0;overflow-x:auto}
+.tabs button{flex:1;border:0;background:transparent;color:#9fb3cc;padding:11px 6px 12px;font-weight:700;font-size:15px;border-bottom:3px solid transparent;white-space:nowrap}
+.tabs button.on{color:#fff;border-bottom-color:#4fd18f}
+.tabs .cnt{display:inline-block;min-width:20px;padding:0 6px;margin-left:4px;border-radius:999px;background:#2d4a6d;color:#fff;font-size:12px;line-height:20px}
+
+main{max-width:760px;margin:0 auto;padding:12px 12px calc(var(--safe-bot) + 40px)}
+.banner{max-width:760px;margin:0 auto;padding:9px 14px;font-size:14px;font-weight:600}
+.banner.off{background:var(--wait-bg);color:var(--wait)}
+.banner.err{background:var(--bad-bg);color:var(--bad)}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.card h3{margin:0 0 10px;font-size:16px}
+label.f{display:block;font-size:13px;font-weight:700;color:var(--ink2);margin:0 0 4px}
+input.i,textarea.i,select.i{width:100%;border:1.5px solid var(--line);border-radius:10px;padding:12px;background:#fff;font-size:16px}
+input.i:focus,textarea.i:focus{outline:none;border-color:var(--nav)}
+.grid2{display:grid;grid-template-columns:1fr 130px;gap:10px}
+.mb{margin-bottom:10px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:0;border-radius:12px;padding:13px 16px;font-weight:800;font-size:16px;background:var(--ink);color:#fff;min-height:48px;text-decoration:none;cursor:pointer}
+.btn.full{width:100%}
+.btn.go{background:var(--go)}.btn.nav{background:var(--nav)}.btn.owe{background:var(--owe)}.btn.bad{background:var(--bad)}
+.btn.ghost{background:#fff;color:var(--ink);border:1.5px solid var(--line)}
+.btn.sm{min-height:40px;padding:8px 12px;font-size:14px;border-radius:10px}
+.btn:disabled{background:#c9d0db;color:#5f6b7d;border-color:#c9d0db}
+.row{display:flex;gap:8px;align-items:center}
+.row>.grow{flex:1}
+.link{background:none;border:0;color:var(--nav);font-weight:700;padding:6px 0;text-decoration:underline;cursor:pointer;font-size:14px}
+.muted{color:var(--mute);font-size:14px}
+.chips{display:flex;gap:8px;overflow-x:auto;margin:2px 0 12px;padding-bottom:2px}
+.chip{border:1.5px solid var(--line);background:#fff;border-radius:999px;padding:8px 14px;font-weight:700;font-size:14px;white-space:nowrap;color:var(--ink2)}
+.chip.on{background:var(--ink);border-color:var(--ink);color:#fff}
+
+/* stop card */
+.stop{position:relative;background:#fff;border:1px solid var(--line);border-radius:14px;margin-bottom:10px;overflow:hidden}
+.stop:before{content:"";position:absolute;left:0;top:0;bottom:0;width:6px;background:#9aa6b8}
+.stop.s-delivered:before{background:var(--go)}
+.stop.s-no_answer:before,.stop.s-returned:before{background:var(--bad)}
+.stop.s-cancelled{opacity:.6}
+.stop-main{display:flex;gap:12px;padding:13px 14px 13px 18px;align-items:flex-start;cursor:pointer}
+.stop-body{flex:1;min-width:0}
+.stop-name{font-weight:800;font-size:17px}
+.stop-sub{font-size:14px;color:var(--ink2);margin-top:2px;word-wrap:break-word}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+.tag{font-size:12px;font-weight:800;border-radius:6px;padding:3px 7px;letter-spacing:.2px}
+.t-pending{background:#eef1f5;color:#44526a}.t-delivered{background:var(--go-bg);color:var(--go)}
+.t-bad{background:var(--bad-bg);color:var(--bad)}.t-cash{background:var(--owe-bg);color:var(--owe)}
+.t-pin{background:var(--nav-bg);color:var(--nav)}.t-nopin{background:#f3f4f6;color:#6b778c}
+.t-wait{background:var(--wait-bg);color:var(--wait)}.t-old{background:#fff1c2;color:#7a5600}
+.stop-amt{text-align:right;font-weight:800;font-size:18px;white-space:nowrap}
+.stop-amt.owe{color:var(--owe)}.stop-amt.pre{color:var(--go);font-size:13px}
+.stop-actions{display:flex;gap:8px;padding:0 14px 14px 18px;flex-wrap:wrap}
+.stop-actions .btn{flex:1;min-width:0}
+.stop-edit{border-top:1px solid var(--line);padding:14px 14px 14px 18px;background:#fafbfc}
+.kv{display:grid;grid-template-columns:110px 1fr;gap:4px 10px;font-size:14px;margin-bottom:10px}
+.kv b{color:var(--ink2);font-weight:700}
+.empty{text-align:center;color:var(--mute);padding:34px 10px}
+
+/* suggestions */
+.sugg{border:1.5px solid var(--line);border-radius:10px;margin:-6px 0 10px;overflow:hidden;background:#fff}
+.sugg button{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:#fff;padding:10px 12px}
+.sugg button:last-child{border-bottom:0}
+.sugg small{display:block;color:var(--mute)}
+
+/* cash */
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.tile{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.tile .v{font-size:24px;font-weight:800}
+.tile .l{font-size:13px;color:var(--ink2);font-weight:700}
+.tile.dark{background:var(--head);color:#fff;border-color:var(--head)}
+.tile.dark .l{color:#9fb3cc}.tile.dark .v{color:#7ee2ad}
+.trip{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}
+.trip .btn{margin-left:8px}
+.trip.late{background:var(--bad-bg);margin:0 -16px;padding:11px 16px}
+.trip.total{border-bottom:0;justify-content:space-between;font-size:17px}
+.due{font-size:13px;font-weight:800}.due.ok{color:var(--go)}.due.warn{color:var(--owe)}.due.bad{color:var(--bad)}
+.cashrow{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}
+.cashrow:last-child{border-bottom:0}
+.cashrow input{width:22px;height:22px;accent-color:var(--go)}
+.diff{font-weight:800;margin:8px 0 12px;font-size:16px}
+.diff.ok{color:var(--go)}.diff.bad{color:var(--bad)}
+.hist{display:flex;justify-content:space-between;gap:8px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
+.hist:last-child{border-bottom:0}
+
+/* sheet */
+.sheet{position:fixed;top:0;right:0;bottom:0;left:0;z-index:50;background:rgba(10,18,30,.55);display:flex;align-items:flex-end;justify-content:center}
+.sheet-in{background:#fff;width:100%;max-width:640px;border-radius:20px 20px 0 0;padding:18px 16px calc(var(--safe-bot) + 18px);max-height:94vh;overflow-y:auto}
+.sheet-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px}
+.sheet-head h2{margin:0;font-size:20px}
+.x{border:0;background:#eef1f5;width:40px;height:40px;border-radius:10px;font-size:20px}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.seg button{border:2px solid var(--line);background:#fff;border-radius:12px;padding:12px 4px;font-weight:800;font-size:14px;min-height:52px}
+.seg button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+.seg2{grid-template-columns:1fr 1fr}
+.seg2 button.on.cash{background:var(--owe);border-color:var(--owe)}
+.seg2 button.on.card{background:var(--nav);border-color:var(--nav)}
+.gps{border-radius:12px;padding:11px 12px;font-size:14px;font-weight:700;margin-bottom:12px}
+.gps.ok{background:var(--go-bg);color:var(--go)}.gps.wait{background:#eef1f5;color:var(--ink2)}.gps.err{background:var(--bad-bg);color:var(--bad)}
+.owebox{background:var(--owe-bg);border:1.5px solid #f3cfa8;border-radius:12px;padding:12px;margin-bottom:12px}
+.big{font-size:28px!important;font-weight:800;padding:12px!important}
+.warn{color:var(--bad);font-weight:700;font-size:13px;margin-top:6px}
+.photo-prev{width:100%;max-height:200px;object-fit:cover;border-radius:12px;margin:-4px 0 12px}
+.map-prev{width:100%;height:170px;border:0;border-radius:12px;margin-bottom:12px;background:#eef1f5}
+
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--safe-bot) + 18px);z-index:80;max-width:92vw;background:#102033;color:#fff;padding:12px 16px;border-radius:12px;font-weight:700;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:opacity .2s}
+#toast.show{opacity:1}
+
+.gate{max-width:420px;margin:0 auto;padding:calc(var(--safe-top) + 40px) 18px 30px}
+.gate h1{font-size:24px;margin:0 0 4px}
+.role-btn{display:block;width:100%;text-align:left;border:2px solid var(--line);background:#fff;border-radius:16px;padding:18px;margin-bottom:12px}
+.role-btn b{display:block;font-size:19px;margin-bottom:3px}
+.help h3{margin:16px 0 6px;font-size:16px}
+.help p,.help li{font-size:15px;color:var(--ink2)}
+.help ol{padding-left:20px;margin:6px 0}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="sheet" class="sheet hidden"></div>
+<div id="toast"></div>
+<script>
+'use strict';
+var DEFAULT_URL = '';
+var APP_VERSION = '2.2.0';
+var K = { cfg: 'drs_cfg', snap: 'drs_snap', out: 'drs_outbox', meta: 'drs_meta' };
+var IN_GAS = !!(window.google && google.script && google.script.run);
+
+/* ----------------------------------------------------------------- storage */
+function load(k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
+function save(k, v) {
+  if (k === K.out) idbPut(k, v);
+  try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; }
+}
+// Unsent changes are also written to IndexedDB with 'strict' durability (flushed to the phone's storage
+// before it reports done). localStorage on Android can lose its last second of writes if the app is killed;
+// on start-up anything missing from localStorage is restored from here. Sending twice is harmless (every
+// change has an id and the server ignores repeats).
+var IDB = null, idbWaiting = [];
+function idbPut(k, v) {
+  if (!IDB) { idbWaiting.push([k, v]); return; }
+  try { var tx = IDB.transaction('kv', 'readwrite', { durability: 'strict' }); tx.objectStore('kv').put(JSON.stringify(v), k); } catch (e) {}
+}
+function idbGet(k, cb) {
+  if (!IDB) return cb(null);
+  try { var rq = IDB.transaction('kv', 'readonly').objectStore('kv').get(k);
+    rq.onsuccess = function () { var v = null; try { v = rq.result ? JSON.parse(rq.result) : null; } catch (e) {} cb(v); };
+    rq.onerror = function () { cb(null); };
+  } catch (e) { cb(null); }
+}
+function idbStart(done) {
+  try {
+    if (!window.indexedDB) return done();
+    var r = indexedDB.open('drs', 1);
+    r.onupgradeneeded = function () { try { r.result.createObjectStore('kv'); } catch (e) {} };
+    r.onsuccess = function () { IDB = r.result; done(); };
+    r.onerror = function () { done(); };
+    r.onblocked = function () { done(); };
+  } catch (e) { done(); }
+}
+function uid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
+}
+
+var S = {
+  cfg: load(K.cfg, {}),
+  snap: load(K.snap, null) || { stops: [], patients: [], settlements: [], driverLoc: null },
+  out: load(K.out, []),
+  meta: load(K.meta, { lastSync: 0 }),
+  tab: 'stops', filter: 'open', syncing: false, again: false, net: 'unknown', err: '',
+  cashSel: {}, lastFix: null, nearest: false, expanded: null, view: null, sh: null, add: {}
+};
+// Setup link: ...#s=<server address>. Lets the iPhone home-screen app learn the server address
+// without it being written into the public copy of the app. The address stays in the link so
+// "Add to Home Screen" keeps it.
+(function () {
+  try {
+    var m = /[#&]s=([^&]+)/.exec(location.hash || '');
+    var u = m ? decodeURIComponent(m[1]) : '';
+    if (/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(u)) S.cfg.url = u;
+  } catch (e) {}
+})();
+if (!S.cfg.url) S.cfg.url = DEFAULT_URL;
+var IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+var STANDALONE = !!(window.navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches));
+var IN_APP = !!(window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform());
+if (!S.cfg.device) S.cfg.device = uid();
+saveCfg();
+function saveCfg() { save(K.cfg, S.cfg); }
+
+/* ----------------------------------------------------------------- helpers */
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function num(v) { var n = Number(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; }
+function money(v) { return (Math.round(num(v) * 100) / 100).toFixed(2); }
+function cad(v) { return '$' + money(v); }
+function keyOf(n) { return String(n || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+function pad(n) { return (n < 10 ? '0' : '') + n; }
+function today() { var d = new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+function dayOf(iso) { if (!iso) return ''; var d = new Date(iso); if (isNaN(d)) return String(iso).slice(0, 10); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+function timeOf(iso) { var d = new Date(iso); if (isNaN(d)) return String(iso || ''); return d.toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' }); }
+function niceDate(ymd) {
+  if (!ymd) return '';
+  var t = today(); if (ymd === t) return 'today';
+  var y = new Date(); y.setDate(y.getDate() - 1);
+  if (ymd === y.getFullYear() + '-' + pad(y.getMonth() + 1) + '-' + pad(y.getDate())) return 'yesterday';
+  var d = new Date(ymd + 'T12:00:00'); if (isNaN(d)) return ymd;
+  return d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+}
+function ago(ts) {
+  if (!ts) return 'never';
+  var s = Math.round((Date.now() - ts) / 1000);
+  if (s < 50) return 'just now'; if (s < 3600) return Math.round(s / 60) + ' min ago';
+  if (s < 86400) return Math.round(s / 3600) + ' h ago'; return Math.round(s / 86400) + ' d ago';
+}
+function isFinal(st) { return st === 'delivered' || st === 'no_answer' || st === 'returned' || st === 'cancelled'; }
+function hasPin(s) { return !!(s && s.lat && s.lng && num(s.lat) !== 0); }
+function statusLabel(st) { return { pending: 'Not delivered yet', delivered: 'Delivered', no_answer: 'No answer', returned: 'Returned', cancelled: 'Cancelled' }[st] || st; }
+var toastT;
+function toast(msg, ms) { var t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(function () { t.classList.remove('show'); }, ms || 3200); }
+
+function destOf(s) {
+  if (hasPin(s)) return s.lat + ',' + s.lng;
+  if (!s.address) return '';
+  var a = String(s.address);
+  if (!/\b(mb|manitoba)\b/i.test(a)) a += ', MB, Canada';
+  return encodeURIComponent(a);
+}
+function navUrl(s) { var d = destOf(s); return d ? 'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=' + d : ''; }
+function pinUrl(lat, lng) { return 'https://www.google.com/maps/search/?api=1&query=' + lat + ',' + lng; }
+
+/** Coordinates from "49.81, -97.12" or a full Google Maps link. Short maps.app.goo.gl links can't be read offline. */
+function parseCoords(text) {
+  var t = String(text || '').trim(); if (!t) return null;
+  var m = t.match(/!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)/) || t.match(/@(-?\d{1,3}\.\d+),\s*(-?\d{1,3}\.\d+)/) ||
+          t.match(/[?&](?:q|query|ll|destination)=(-?\d{1,3}\.\d+)(?:,|%2C)\s*(-?\d{1,3}\.\d+)/i) ||
+          t.match(/^\s*\(?\s*(-?\d{1,3}\.\d{3,})\s*[, ]\s*(-?\d{1,3}\.\d{3,})\s*\)?\s*$/);
+  if (!m) return null;
+  var lat = Number(m[1]), lng = Number(m[2]);
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { lat: +lat.toFixed(6), lng: +lng.toFixed(6) };
+}
+function kmBetween(a, b) {
+  var R = 6371, dLat = (b.lat - a.lat) * Math.PI / 180, dLng = (b.lng - a.lng) * Math.PI / 180;
+  var x = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+
+/* ------------------------------------------------- local view = server + outbox */
+function findStop(list, id) { for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i]; return null; }
+function findPat(list, name) { var k = keyOf(name); for (var i = 0; i < list.length; i++) if (keyOf(list[i].name) === k) return list[i]; return null; }
+function upsertPatLocal(pats, name, patch, overwritePin) {
+  if (!keyOf(name)) return;
+  var p = findPat(pats, name);
+  if (!p) { p = { name: String(name).trim(), address: '', phone: '', lat: '', lng: '' }; pats.push(p); }
+  if (patch.address) p.address = patch.address;
+  if (patch.phone) p.phone = patch.phone;
+  if (patch.lat && patch.lng && (overwritePin || !p.lat)) { p.lat = patch.lat; p.lng = patch.lng; }
+}
+
+function applyLocal(stops, pats, sets, op) {
+  var s, f;
+  if (op.type === 'add') {
+    if (findStop(stops, op.stop.id)) return;
+    var known = findPat(pats, op.stop.patient) || {};
+    s = Object.assign({}, op.stop);
+    s.status = 'pending'; s.settled = true; s.amount = money(op.stop.amount); s._pending = true;
+    s.address = s.address || known.address || ''; s.phone = s.phone || known.phone || '';
+    if (!hasPin(s) && hasPin(known)) { s.lat = known.lat; s.lng = known.lng; }
+    stops.push(s);
+    upsertPatLocal(pats, s.patient, { address: op.stop.address, phone: op.stop.phone, lat: op.stop.lat, lng: op.stop.lng }, true);
+  } else if (op.type === 'update') {
+    s = findStop(stops, op.id); if (!s) return;
+    f = op.fields || {};
+    ['patient', 'address', 'phone', 'note', 'seq'].forEach(function (k) { if (f[k] !== undefined) s[k] = f[k]; });
+    if (f.amount !== undefined && !(s.status === 'delivered' && !s.settled)) s.amount = money(f.amount);
+    if (f.lat && f.lng) { s.lat = f.lat; s.lng = f.lng; }
+    if (f.status === 'pending' && (s.status === 'no_answer' || s.status === 'returned' || s.status === 'cancelled')) {
+      s.status = 'pending'; s.collected = ''; s.method = ''; s.deliveredAt = ''; s.settled = true; if (f.date) s.date = f.date;
+    } else if (f.status === 'cancelled' && s.status !== 'delivered') s.status = 'cancelled';
+    if (f.address || f.phone || (f.lat && f.lng)) upsertPatLocal(pats, s.patient, { address: f.address, phone: f.phone, lat: f.lat, lng: f.lng }, true);
+    s._pending = true;
+  } else if (op.type === 'complete') {
+    s = findStop(stops, op.id); if (!s || s.status === 'cancelled' || s.status === 'delivered') return;
+    var owes = num(s.amount) > 0;
+    s.status = op.status;
+    s.deliveredAt = op.at;
+    s.collected = (op.status === 'delivered' && owes) ? money(op.collected) : '0.00';
+    s.method = (op.status === 'delivered' && owes) ? op.method : '';
+    s.settled = !(op.status === 'delivered' && s.method === 'cash' && num(s.collected) > 0);
+    s.driverNote = op.note || '';
+    s._photoPending = !!op.photo;
+    s.dropLat = op.lat || ''; s.dropLng = op.lng || '';
+    if (!hasPin(s) && op.lat && op.status === 'delivered') { s.lat = op.lat; s.lng = op.lng; }
+    s._pending = true;
+  } else if (op.type === 'pin') {
+    upsertPatLocal(pats, op.patient, { lat: op.lat, lng: op.lng, address: op.address }, true);
+    stops.forEach(function (x) { if (keyOf(x.patient) === keyOf(op.patient) && !isFinal(x.status)) { x.lat = op.lat; x.lng = op.lng; x._pending = true; } });
+  } else if (op.type === 'settle') {
+    var exp = 0, c = 0;
+    op.ids.forEach(function (id) {
+      var x = findStop(stops, id);
+      if (x && x.status === 'delivered' && x.method === 'cash' && !x.settled) { exp += num(x.collected); c++; x.settled = true; x.settlementId = op.settlementId; x._pending = true; }
+    });
+    if (!sets.some(function (z) { return z.settlementId === op.settlementId; })) {
+      sets.unshift({ settlementId: op.settlementId, ts: op.at, count: c, expected: exp, counted: num(op.counted), diff: num(op.counted) - exp, _pending: true });
+    }
+  }
+}
+
+function computeView() {
+  var stops = (S.snap.stops || []).map(function (s) { return Object.assign({}, s); });
+  var pats = (S.snap.patients || []).map(function (p) { return Object.assign({}, p); });
+  var sets = (S.snap.settlements || []).slice();
+  S.out.forEach(function (op) { applyLocal(stops, pats, sets, op); });
+  stops.sort(function (a, b) {
+    var sa = num(a.seq) || 0, sb = num(b.seq) || 0;
+    if (sa !== sb) return sa - sb;
+    return String(a.created || '').localeCompare(String(b.created || ''));
+  });
+  S.view = { stops: stops, patients: pats, settlements: sets };
+}
+
+/* ------------------------------------------------------------------ syncing */
+function callApi(body, timeoutMs) {
+  timeoutMs = timeoutMs || 45000;
+  if (IN_GAS) {
+    return new Promise(function (res, rej) {
+      var done = false;
+      var t = setTimeout(function () { if (!done) { done = true; rej(new Error('timeout')); } }, timeoutMs);
+      google.script.run.withSuccessHandler(function (r) {
+        if (done) return; done = true; clearTimeout(t);
+        try { res(JSON.parse(r)); } catch (e) { rej(e); }
+      }).withFailureHandler(function (e) { if (done) return; done = true; clearTimeout(t); rej(e); }).apiCall(JSON.stringify(body));
+    });
+  }
+  var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  var t = setTimeout(function () { if (ctl) ctl.abort(); }, timeoutMs);
+  return fetch(S.cfg.url, {
+    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body),
+    redirect: 'follow', credentials: 'omit', cache: 'no-store', signal: ctl ? ctl.signal : undefined
+  }).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.text();
+  }).then(function (txt) {
+    clearTimeout(t);
+    try { return JSON.parse(txt); } catch (e) { var err = new Error('not_json'); err.notJson = true; throw err; }
+  }, function (e) { clearTimeout(t); throw e; });
+}
+
+var syncT;
+function scheduleSync(ms) { clearTimeout(syncT); syncT = setTimeout(sync, ms == null ? 300 : ms); }
+
+function sync() {
+  if (!S.cfg.pin) return Promise.resolve();
+  if (S.syncing) { S.again = true; return Promise.resolve(); }
+  S.syncing = true; renderPill();
+  // Upload size adapts to the signal: starts small, halves after a failed send, grows after a good one.
+  // At least one change always goes, so a weak 2G line still moves the queue forward one photo at a time.
+  var cap = S.batchMax || 250000, batch = [], size = 0;
+  for (var i = 0; i < S.out.length && batch.length < 12; i++) {
+    var sz = JSON.stringify(S.out[i]).length;
+    if (batch.length && size + sz > cap) break;
+    batch.push(S.out[i]); size += sz;
+  }
+  var body = { action: 'sync', pin: S.cfg.pin, ops: batch, device: S.cfg.device, role: S.cfg.role };
+  if (S.cfg.role === 'driver' && S.lastFix && Date.now() - S.lastFix.ts < 10 * 60000) body.loc = S.lastFix;
+  var sentOps = batch.length;
+  return callApi(body, Math.min(180000, 30000 + Math.round(size / 3))).then(function (res) {
+    if (!res || !res.ok) {
+      if (res && (res.error === 'bad_pin' || res.error === 'pin_not_set')) {
+        S.cfg.pin = ''; saveCfg(); S.net = 'online';
+        toast('The team PIN was changed. Enter the new PIN. Your saved work is kept.', 6000);
+        renderAll(); return;
+      }
+      throw new Error((res && (res.message || res.error)) || 'server');
+    }
+    var done = {};
+    (res.applied || []).forEach(function (a) {
+      if (a.ok || a.permanent) done[a.opId] = true;
+      if (!a.ok && a.permanent) toast('Could not save one change: ' + errText(a.error), 5000);
+    });
+    S.out = S.out.filter(function (o) { return !done[o.opId]; });
+    save(K.out, S.out);
+    S.snap = res.data || S.snap; save(K.snap, S.snap);
+    S.meta.lastSync = Date.now(); save(K.meta, S.meta);
+    S.net = 'online'; S.err = '';
+    if (sentOps) S.batchMax = Math.min(900000, cap * 2);
+  }).catch(function (e) {
+    if (sentOps) S.batchMax = Math.max(40000, Math.floor(cap / 2));
+    S.net = 'offline';
+    S.err = (e && e.notJson) ? 'The server address did not answer like the delivery app. Check the address in Settings.' : '';
+  }).then(function () {
+    S.syncing = false;
+    computeView(); renderDynamic();
+    if (S.again || (S.net === 'online' && S.out.length)) { S.again = false; scheduleSync(400); }
+  });
+}
+function errText(code) {
+  return { not_found: 'that delivery no longer exists', cannot_resend: 'it is not marked as not delivered',
+    already_delivered: 'it was already delivered', locked_cash_pending: 'cash for it is still with the driver',
+    cancelled: 'it was cancelled', missing_fields: 'details were missing' }[code] || code;
+}
+
+function enqueue(op) {
+  op.opId = uid();
+  op.at = op.at || new Date().toISOString();
+  op.by = S.cfg.role || '';
+  S.out.push(op);
+  if (!save(K.out, S.out)) {
+    if (op.photo) { delete op.photo; op.photoDropped = true; save(K.out, S.out); toast('Phone storage is full — the photo was not kept, the rest is saved.', 5000); }
+    else toast('Phone storage is full. Connect to sync soon.', 5000);
+  }
+  computeView(); renderDynamic();
+  scheduleSync(250);
+}
+
+/* ---------------------------------------------------------------------- GPS */
+function getFix(timeout, maxAge) {
+  return new Promise(function (res, rej) {
+    if (!navigator.geolocation) return rej({ code: 9 });
+    navigator.geolocation.getCurrentPosition(function (p) {
+      var f = { lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6), acc: Math.round(p.coords.accuracy || 0), ts: Date.now() };
+      S.lastFix = f; res(f);
+    }, function (e) { rej(e || { code: 2 }); }, { enableHighAccuracy: true, timeout: timeout || 25000, maximumAge: maxAge == null ? 0 : maxAge });
+  });
+}
+function gpsErrText(e) {
+  var c = e && e.code;
+  if (c === 1) return 'Location is turned off for this app. Allow location in phone Settings > Apps > Delivery Run Sheet > Permissions, then tap Try again.';
+  if (c === 9) return 'This device has no GPS.';
+  return 'No GPS fix yet. Step away from the vehicle or building and tap Try again. GPS works without cell signal, it can just take up to a minute.';
+}
+var locTimer;
+function startDriverLoc() {
+  clearInterval(locTimer);
+  if (S.cfg.role !== 'driver') return;
+  var tick = function () { if (document.visibilityState === 'visible') getFix(20000, 60000).catch(function () {}); };
+  tick();
+  locTimer = setInterval(tick, 120000);
+}
+
+/* -------------------------------------------------------------------- photos */
+function compressPhoto(file) {
+  return new Promise(function (res, rej) {
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function () {
+      var max = 720, w = img.naturalWidth, h = img.naturalHeight;
+      if (w > h && w > max) { h = Math.round(h * max / w); w = max; } else if (h > max) { w = Math.round(w * max / h); h = max; }
+      var c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      res(c.toDataURL('image/jpeg', 0.5));
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); rej(new Error('photo')); };
+    img.src = url;
+  });
+}
+
+/* --------------------------------------------------------------- derived sets */
+function V() { if (!S.view) computeView(); return S.view; }
+function openStops() { return V().stops.filter(function (s) { return s.status === 'pending'; }); }
+function notDelivered() { return V().stops.filter(function (s) { return s.status === 'no_answer' || s.status === 'returned'; }); }
+function doneToday() { var t = today(); return V().stops.filter(function (s) { return isFinal(s.status) && s.status !== 'cancelled' && dayOf(s.deliveredAt) === t; }); }
+// Cash goes back to the pharmacy within CASH_DAYS days of the trip (one trip = one delivery day).
+var CASH_DAYS = 3;
+function ymdAdd(ymd, n) { var p = String(ymd).split('-'), d = new Date(+p[0], +p[1] - 1, +p[2] + n); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+function ymdDiff(a, b) { var pa = String(a).split('-'), pb = String(b).split('-'); return Math.round((new Date(+pb[0], +pb[1] - 1, +pb[2]) - new Date(+pa[0], +pa[1] - 1, +pa[2])) / 864e5); }
+function weekday(ymd) { var d = new Date(ymd + 'T12:00:00'); return isNaN(d) ? ymd : d.toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' }); }
+function driverDueLine() {
+  var trips = cashTrips(); if (!trips.length) return '';
+  var late = trips.filter(function (x) { return x.late; });
+  if (late.length) return '<div id="due-line" style="margin-top:6px;font-weight:800;color:#ffb4ab">OVERDUE: bring ' + cad(late.reduce(function (t, x) { return t + x.amount; }, 0)) + ' to the pharmacy now</div>';
+  var first = trips[0];
+  return '<div id="due-line" style="margin-top:6px;font-weight:700;color:#ffe9a8">Bring ' + cad(first.amount) + ' back by ' + esc(weekday(first.due)) + '</div>';
+}
+function cashTrips() {
+  var by = {}, t = today();
+  cashHeld().forEach(function (s) { var d = dayOf(s.deliveredAt) || t; (by[d] = by[d] || []).push(s); });
+  return Object.keys(by).sort().map(function (d) {
+    var due = ymdAdd(d, CASH_DAYS), left = ymdDiff(t, due);
+    return { day: d, stops: by[d], amount: by[d].reduce(function (x, s) { return x + num(s.collected); }, 0), due: due, left: left, late: left < 0 };
+  });
+}
+function dueText(tr) {
+  if (tr.left < 0) return 'OVERDUE ' + (-tr.left) + ' day' + (tr.left === -1 ? '' : 's');
+  if (tr.left === 0) return 'Due today';
+  return tr.left + ' day' + (tr.left === 1 ? '' : 's') + ' left';
+}
+function cashHeld() { return V().stops.filter(function (s) { return s.status === 'delivered' && s.method === 'cash' && !s.settled && num(s.collected) > 0; }); }
+
+/* ------------------------------------------------------------------ rendering */
+function renderAll() {
+  var app = $('app');
+  if (!S.cfg.pin) { app.innerHTML = gateHtml(); afterGate(); return; }
+  if (!S.cfg.role) { app.innerHTML = roleHtml(); return; }
+  computeView();
+  var tabs = S.cfg.role === 'driver'
+    ? [['stops', 'My stops', openStops().length], ['help', 'Help']]
+    : [['stops', 'Deliveries', openStops().length], ['cash', 'Cash', cashHeld().length], ['driver', 'Driver'], ['help', 'Help']];
+  if (!tabs.some(function (t) { return t[0] === S.tab; })) S.tab = 'stops';
+  app.innerHTML =
+    '<div class="top"><div class="top-row">' +
+      '<div class="brand">Delivery Run Sheet<small>' + (S.cfg.role === 'driver' ? 'Driver' : 'Pharmacy') + '</small></div>' +
+      '<button class="pill" id="pill" data-act="sync"></button>' +
+      '<button class="gear" data-act="settings" aria-label="Settings">&#9881;</button>' +
+    '</div><div class="tabs">' + tabs.map(function (t) {
+      return '<button class="' + (S.tab === t[0] ? 'on' : '') + '" data-act="tab:' + t[0] + '">' + t[1] +
+        (t[2] !== undefined ? '<span class="cnt" id="cnt-' + t[0] + '">' + t[2] + '</span>' : '') + '</button>';
+    }).join('') + '</div></div>' +
+    '<div id="banner"></div><main id="main"></main>';
+  var m = $('main');
+  if (S.tab === 'help') m.innerHTML = helpHtml();
+  else if (S.tab === 'cash') m.innerHTML = cashShellHtml();
+  else if (S.tab === 'driver') m.innerHTML = '<div id="dyn"></div>';
+  else if (S.cfg.role === 'driver') m.innerHTML = driverShellHtml();
+  else m.innerHTML = pharmShellHtml();
+  renderDynamic();
+}
+
+function renderPill() {
+  var p = $('pill'); if (!p) return;
+  var n = S.out.length;
+  if (S.syncing) { p.className = 'pill busy'; p.innerHTML = '<span class="dot"></span>' + (n ? 'Sending ' + n + '…' : 'Updating…'); }
+  else if (S.net === 'offline') { p.className = 'pill off'; p.innerHTML = '<span class="dot"></span>' + (n ? n + ' saved on phone' : 'No signal'); }
+  else if (n) { p.className = 'pill off'; p.innerHTML = '<span class="dot"></span>' + n + ' saved on phone'; }
+  else { p.className = 'pill ok'; p.innerHTML = '<span class="dot"></span>' + (S.meta.lastSync ? 'Up to date' : 'Tap to update'); }
+  var b = $('banner'); if (!b) return;
+  if (S.err) b.innerHTML = '<div class="banner err">' + esc(S.err) + '</div>';
+  else if (S.net === 'offline') b.innerHTML = '<div class="banner off">No signal. Keep working — ' + (n ? n + ' change' + (n > 1 ? 's are' : ' is') + ' saved on this phone and' : 'changes are saved on this phone and') + ' will send by themselves. Last update ' + ago(S.meta.lastSync) + '.</div>';
+  else b.innerHTML = '';
+}
+
+function renderDynamic() {
+  if (!S.cfg.pin || !S.cfg.role || !$('main')) return;
+  renderPill();
+  var c1 = $('cnt-stops'); if (c1) c1.textContent = openStops().length;
+  var c2 = $('cnt-cash'); if (c2) c2.textContent = cashHeld().length;
+  if (S.tab === 'stops' && S.cfg.role === 'driver') renderDriverList();
+  else if (S.tab === 'stops') renderPharmList();
+  else if (S.tab === 'cash') renderCash();
+  else if (S.tab === 'driver') renderDriverTab();
+  if (S.sh) refreshSheet();
+}
+
+/* ------------------------------------------------------------ gate & roles */
+function gateHtml() {
+  var iosHint = (IS_IOS && !STANDALONE && !IN_APP && !IN_GAS) ?
+    '<div class="card" id="ios-hint" style="border:2px solid var(--nav)"><b>iPhone: install it first</b><ol style="margin:8px 0 0 18px;padding:0">' +
+    '<li>Tap the <b>Share</b> button (square with arrow) at the bottom of Safari.</li><li>Tap <b>Add to Home Screen</b>, then <b>Add</b>.</li>' +
+    '<li>Close Safari and open <b>Run Sheet</b> from the home screen. Enter the PIN there.</li></ol>' +
+    '<p class="muted" style="margin:8px 0 0">The home-screen app works with no signal. Safari tabs do not.</p></div>' : '';
+  var noServer = !S.cfg.url ? '<div class="card" id="no-server"><b>This phone is not connected to the pharmacy yet.</b><p class="muted" style="margin:6px 0 0">Open the setup link from the pharmacy email on this phone, or paste the server address below.</p></div>' : '';
+  return '<div class="gate"><h1>Delivery Run Sheet</h1>' + iosHint + noServer + '<p class="muted">Enter the team PIN. You only do this once on this phone.</p>' +
+    '<div class="card">' +
+      '<label class="f">Team PIN</label><input class="i big num mb" id="g-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN">' +
+      '<div id="g-new" class="hidden"><label class="f">Type the new PIN again</label><input class="i big num mb" id="g-pin2" type="password" inputmode="numeric" autocomplete="off"></div>' +
+      '<div id="g-msg" class="muted mb"></div>' +
+      '<button class="btn go full" data-act="gate-go" id="g-go">Unlock</button>' +
+      '<button class="link" data-act="gate-adv">Server address</button>' +
+      '<div id="g-adv" class="' + (S.cfg.url ? 'hidden' : '') + '" style="margin-top:8px"><label class="f">Server address</label><textarea class="i" id="g-url" rows="3">' + esc(S.cfg.url) + '</textarea></div>' +
+    '</div></div>';
+}
+function afterGate() {
+  var msg = $('g-msg'); msg.textContent = 'Checking the server…';
+  callApi({ action: 'ping' }, 20000).then(function (r) {
+    if (r && r.ok && !r.pinSet) {
+      S.gateNew = true; $('g-new').classList.remove('hidden'); $('g-go').textContent = 'Create team PIN';
+      msg.textContent = 'No team PIN yet. Pick one (4 or more digits) — everyone will use it.';
+    } else msg.textContent = '';
+  }).catch(function () { msg.textContent = 'No signal right now. The first unlock needs signal once.'; });
+}
+function gateGo() {
+  var pin = $('g-pin').value.trim(), msg = $('g-msg');
+  var urlBox = $('g-url'); if (urlBox && urlBox.value.trim()) { S.cfg.url = urlBox.value.trim(); saveCfg(); }
+  if (pin.length < 4) { msg.textContent = 'The PIN has at least 4 digits.'; return; }
+  $('g-go').disabled = true;
+  var p;
+  if (S.gateNew) {
+    if ($('g-pin2').value.trim() !== pin) { msg.textContent = 'The two PINs do not match.'; $('g-go').disabled = false; return; }
+    p = callApi({ action: 'setPin', pin: pin }, 30000).then(function (r) { if (!r.ok && r.error !== 'pin_already_set') throw new Error(r.error); });
+  } else p = Promise.resolve();
+  p.then(function () { return callApi({ action: 'sync', pin: pin, ops: [], device: S.cfg.device }, 45000); }).then(function (r) {
+    if (!r.ok) { msg.textContent = r.error === 'bad_pin' ? 'Wrong PIN.' : r.error === 'locked' ? 'Too many wrong PINs. Wait 15 minutes, then try again.' : 'Server problem: ' + (r.message || r.error); $('g-go').disabled = false; return; }
+    S.cfg.pin = pin; saveCfg();
+    S.snap = r.data; save(K.snap, S.snap); S.meta.lastSync = Date.now(); save(K.meta, S.meta); S.net = 'online';
+    renderAll(); if (S.out.length) scheduleSync(200);
+  }).catch(function (e) {
+    msg.textContent = (e && e.notJson) ? 'That server address is not answering like the delivery app.' : 'No signal. Connect once to unlock.';
+    $('g-go').disabled = false;
+  });
+}
+function roleHtml() {
+  return '<div class="gate"><h1>Who uses this phone?</h1><p class="muted">You can change this later in Settings.</p>' +
+    '<button class="role-btn" data-act="role:pharmacy"><b>Pharmacy</b><span class="muted">Add deliveries, see what is delivered, count the driver\'s cash.</span></button>' +
+    '<button class="role-btn" data-act="role:driver"><b>Driver</b><span class="muted">See every delivery waiting, navigate, take payment, pin locations.</span></button></div>';
+}
+
+/* --------------------------------------------------------------- stop cards */
+function stopTags(s) {
+  var t = [];
+  if (s.status === 'pending') t.push('<span class="tag t-pending">NOT DELIVERED YET</span>');
+  else if (s.status === 'delivered') t.push('<span class="tag t-delivered">DELIVERED ' + esc(timeOf(s.deliveredAt)) + (dayOf(s.deliveredAt) !== today() ? ' · ' + esc(niceDate(dayOf(s.deliveredAt))) : '') + '</span>');
+  else if (s.status === 'cancelled') t.push('<span class="tag t-pending">CANCELLED</span>');
+  else t.push('<span class="tag t-bad">' + (s.status === 'returned' ? 'RETURNED' : 'NO ANSWER') + ' · NOT DELIVERED</span>');
+  if (s.status === 'pending' && s.date && s.date < today()) t.push('<span class="tag t-old">FROM ' + esc(niceDate(s.date).toUpperCase()) + '</span>');
+  if (s.status === 'delivered' && num(s.collected) > 0) t.push('<span class="tag t-cash">TOOK ' + cad(s.collected) + ' ' + esc((s.method || '').toUpperCase()) + (s.method === 'cash' && !s.settled ? ' · WITH DRIVER' : '') + '</span>');
+  t.push(hasPin(s) ? '<span class="tag t-pin">PINNED</span>' : '<span class="tag t-nopin">NO PIN</span>');
+  if (s._pending || s._photoPending) t.push('<span class="tag t-wait">SAVED ON PHONE</span>');
+  return '<div class="tags">' + t.join('') + '</div>';
+}
+function amtHtml(s) {
+  return num(s.amount) > 0 ? '<div class="stop-amt owe num">' + cad(s.amount) + '</div>' : '<div class="stop-amt pre">PREPAID</div>';
+}
+
+/* ---------------------------------------------------------------- pharmacy */
+function pharmShellHtml() {
+  return '<div class="card"><h3>Add a delivery</h3>' +
+    '<label class="f">Patient last name</label><input class="i mb" id="a-name" autocomplete="off" placeholder="e.g. Sawatzky">' +
+    '<div id="a-sugg"></div>' +
+    '<div class="grid2 mb"><div><label class="f">Address</label><input class="i" id="a-addr" autocomplete="off" placeholder="Street, town"></div>' +
+    '<div><label class="f">$ owing</label><input class="i num" id="a-amt" inputmode="decimal" placeholder="0 = prepaid"></div></div>' +
+    '<div id="a-more" class="hidden">' +
+      '<label class="f">Phone</label><input class="i mb" id="a-phone" inputmode="tel">' +
+      '<label class="f">Pin (coordinates or a full Google Maps link)</label><input class="i mb" id="a-pin" placeholder="49.8123, -97.1234"><div id="a-pinmsg" class="muted mb"></div>' +
+      '<label class="f">Note for driver</label><input class="i mb" id="a-note" placeholder="Gate code, fridge item…">' +
+    '</div>' +
+    '<div class="row"><button class="link" data-act="add-more" id="a-morebtn">+ phone, pin, note</button><span class="grow"></span>' +
+    '<button class="btn go" data-act="add-stop">Add delivery</button></div></div>' +
+    '<div class="chips" id="chips"></div><div id="list"></div>';
+}
+function renderPharmList() {
+  var list = $('list'); if (!list) return;
+  var o = openStops(), nd = notDelivered(), dt = doneToday();
+  var all = V().stops;
+  $('chips').innerHTML = [['open', 'Not delivered yet', o.length], ['nd', 'Not delivered (failed)', nd.length], ['done', 'Done today', dt.length], ['all', 'All', all.length]]
+    .map(function (c) { return '<button class="chip ' + (S.filter === c[0] ? 'on' : '') + '" data-act="filter:' + c[0] + '">' + c[1] + ' · ' + c[2] + '</button>'; }).join('');
+  var rows = S.filter === 'nd' ? nd : S.filter === 'done' ? dt : S.filter === 'all' ? all.slice().reverse() : o;
+  if (!rows.length) { list.innerHTML = '<div class="empty">' + (S.filter === 'open' ? 'No deliveries waiting.' : 'Nothing here.') + '</div>'; return; }
+  list.innerHTML = rows.map(function (s, idx) {
+    var open = S.expanded === s.id;
+    var h = '<div class="stop s-' + esc(s.status) + '"><div class="stop-main" data-act="expand:' + esc(s.id) + '">' +
+      '<div class="stop-body"><div class="stop-name">' + esc(s.patient) + '</div>' +
+      '<div class="stop-sub">' + esc(s.address || (hasPin(s) ? 'Pinned location' : 'No address')) + (s.note ? ' · ' + esc(s.note) : '') + '</div>' +
+      stopTags(s) + '</div>' + amtHtml(s) + '</div>';
+    if (s.status === 'no_answer' || s.status === 'returned') {
+      h += '<div class="stop-actions"><button class="btn go sm" data-act="resend:' + esc(s.id) + '">Send again with the driver</button></div>';
+    }
+    if (open) h += pharmEditHtml(s, idx, rows.length);
+    return h + '</div>';
+  }).join('');
+}
+function pharmEditHtml(s, idx, n) {
+  var h = '<div class="stop-edit">';
+  if (isFinal(s.status) && s.status !== 'cancelled') {
+    h += '<div class="kv"><b>Result</b><span>' + esc(statusLabel(s.status)) + ' at ' + esc(timeOf(s.deliveredAt)) + ' ' + esc(niceDate(dayOf(s.deliveredAt))) + '</span>';
+    if (num(s.amount) > 0) h += '<b>Owing</b><span>' + cad(s.amount) + '</span><b>Collected</b><span>' + (s.status === 'delivered' ? cad(s.collected) + ' ' + esc(s.method) : '—') + (s.status === 'delivered' && num(s.collected) !== num(s.amount) ? ' <span class="warn">does not match</span>' : '') + '</span>';
+    if (s.method === 'cash') h += '<b>Cash</b><span>' + (s.settled ? 'Received at pharmacy' : 'Still with driver') + '</span>';
+    if (s.driverNote) h += '<b>Driver note</b><span>' + esc(s.driverNote) + '</span>';
+    h += '<b>Proof</b><span>' + (s.photoUrl ? '<a href="' + esc(s.photoUrl) + '" target="_blank" rel="noopener">Photo</a>' : (s._photoPending ? 'Photo uploading' : 'No photo')) +
+      (s.dropLat ? ' · <a href="' + pinUrl(s.dropLat, s.dropLng) + '" target="_blank" rel="noopener">Drop point</a>' : '') + '</span></div>';
+  }
+  if (!isFinal(s.status)) {
+    h += '<label class="f">Address</label><input class="i mb" id="e-addr" value="' + esc(s.address) + '">' +
+      '<div class="grid2 mb"><div><label class="f">Phone</label><input class="i" id="e-phone" inputmode="tel" value="' + esc(s.phone) + '"></div>' +
+      '<div><label class="f">$ owing</label><input class="i num" id="e-amt" inputmode="decimal" value="' + esc(num(s.amount) ? money(s.amount) : '') + '"></div></div>' +
+      '<label class="f">Pin (coordinates or full Google Maps link)</label><input class="i mb" id="e-pin" placeholder="' + (hasPin(s) ? esc(s.lat + ', ' + s.lng) : '49.8123, -97.1234') + '">' +
+      '<label class="f">Note for driver</label><input class="i mb" id="e-note" value="' + esc(s.note) + '">' +
+      '<div class="row mb"><button class="btn go grow" data-act="save-edit:' + esc(s.id) + '">Save changes</button>' +
+      '<button class="btn ghost sm" data-act="move:' + esc(s.id) + ':-1"' + (idx === 0 ? ' disabled' : '') + '>&uarr;</button>' +
+      '<button class="btn ghost sm" data-act="move:' + esc(s.id) + ':1"' + (idx === n - 1 ? ' disabled' : '') + '>&darr;</button></div>' +
+      '<button class="link" style="color:var(--bad)" data-act="cancel-stop:' + esc(s.id) + '">Cancel this delivery</button>';
+  }
+  if (hasPin(s)) h += ' <a class="link" href="' + pinUrl(s.lat, s.lng) + '" target="_blank" rel="noopener">See pin on map</a>';
+  return h + '</div>';
+}
+function suggestHtml(q) {
+  var k = keyOf(q); if (k.length < 2) return '';
+  var m = V().patients.filter(function (p) { return keyOf(p.name).indexOf(k) >= 0; }).slice(0, 5);
+  if (!m.length) return '';
+  S.suggest = m;
+  return '<div class="sugg">' + m.map(function (p, i) {
+    return '<button data-act="pick:' + i + '"><b>' + esc(p.name) + '</b><small>' + esc(p.address || '') + (hasPin(p) ? ' · pinned' : '') + '</small></button>';
+  }).join('') + '</div>';
+}
+function addStopFromForm() {
+  var name = $('a-name').value.trim();
+  if (!name) { toast('Type the patient name.'); $('a-name').focus(); return; }
+  var pinText = $('a-pin') ? $('a-pin').value : '';
+  var pin = parseCoords(pinText) || S.add.pin || null;
+  if (pinText.trim() && !parseCoords(pinText)) { toast('That pin could not be read. Paste coordinates like 49.81, -97.12.'); return; }
+  var maxSeq = openStops().reduce(function (m, s) { return Math.max(m, num(s.seq)); }, 0);
+  enqueue({ type: 'add', stop: {
+    id: uid(), created: new Date().toISOString(), date: today(), seq: String(maxSeq + 1), patient: name,
+    address: $('a-addr').value.trim(), phone: $('a-phone').value.trim(), note: $('a-note').value.trim(),
+    amount: money($('a-amt').value), lat: pin ? pin.lat : '', lng: pin ? pin.lng : '', addedBy: 'pharmacy'
+  }});
+  ['a-name', 'a-addr', 'a-amt', 'a-phone', 'a-pin', 'a-note'].forEach(function (id) { if ($(id)) $(id).value = ''; });
+  $('a-sugg').innerHTML = ''; $('a-pinmsg').textContent = ''; S.add = {};
+  S.filter = 'open'; renderDynamic();
+  toast('Added ' + name + '. The driver will see it.');
+  $('a-name').focus();
+}
+
+/* ------------------------------------------------------------------- driver */
+function driverShellHtml() {
+  return '<button class="btn nav full mb" style="min-height:58px;font-size:17px" data-act="new-here">+ New patient here — pin my location</button>' +
+    '<div id="dhead"></div><div id="list"></div>';
+}
+function renderDriverList() {
+  var list = $('list'); if (!list) return;
+  var o = openStops().slice(), dt = doneToday(), held = cashHeld();
+  if (S.nearest && S.lastFix) {
+    o.sort(function (a, b) {
+      var da = hasPin(a) ? kmBetween(S.lastFix, { lat: num(a.lat), lng: num(a.lng) }) : 1e9;
+      var db = hasPin(b) ? kmBetween(S.lastFix, { lat: num(b.lat), lng: num(b.lng) }) : 1e9;
+      return da - db;
+    });
+  }
+  var routable = o.filter(function (s) { return destOf(s); });
+  var owed = o.reduce(function (t, s) { return t + num(s.amount); }, 0);
+  var heldAmt = held.reduce(function (t, s) { return t + num(s.collected); }, 0);
+  var h = '<div class="tiles"><div class="tile"><div class="l">Waiting</div><div class="v num">' + o.length + '</div><div class="muted">' + cad(owed) + ' to collect</div></div>' +
+    '<div class="tile dark"><div class="l">Cash you hold</div><div class="v num">' + cad(heldAmt) + '</div><div class="l">' + held.length + ' deliver' + (held.length === 1 ? 'y' : 'ies') + '</div>' + driverDueLine() + '</div></div>';
+  if (routable.length) {
+    h += '<div class="row mb"><a class="btn nav grow" id="route" href="' + esc(routeUrl()) + '" target="_blank" rel="noopener">Route in Google Maps (' + Math.min(routable.length, 10) + ')</a>' +
+      '<button class="btn ghost sm" data-act="nearest">' + (S.nearest ? 'List order' : 'Nearest first') + '</button></div>';
+  }
+  $('dhead').innerHTML = h;
+  if (!o.length && !dt.length) { list.innerHTML = '<div class="empty">No deliveries waiting. New ones from the pharmacy appear here.</div>'; return; }
+  var html = o.map(function (s) {
+    var owes = num(s.amount) > 0, nu = navUrl(s);
+    return '<div class="stop s-pending"><div class="stop-main"><div class="stop-body"><div class="stop-name">' + esc(s.patient) + '</div>' +
+      '<div class="stop-sub">' + esc(s.address || (hasPin(s) ? 'Pinned location' : 'No address — ask the pharmacy or pin it')) + '</div>' +
+      (s.note ? '<div class="stop-sub" style="color:var(--owe);font-weight:700">' + esc(s.note) + '</div>' : '') +
+      stopTags(s) + '</div>' + amtHtml(s) + '</div>' +
+      '<div class="stop-actions">' +
+        (nu ? '<a class="btn ghost sm" href="' + nu + '" target="_blank" rel="noopener">Navigate</a>' : '') +
+        (s.phone ? '<a class="btn ghost sm" href="tel:' + esc(String(s.phone).replace(/[^0-9+]/g, '')) + '">Call</a>' : '') +
+        (!hasPin(s) ? '<button class="btn ghost sm" data-act="pin-here:' + esc(s.id) + '">Pin here</button>' : '') +
+      '</div><div class="stop-actions"><button class="btn go full" data-act="complete:' + esc(s.id) + '">' + (owes ? 'Collect ' + cad(s.amount) + ' — finish' : 'Delivered — finish') + '</button></div></div>';
+  }).join('');
+  if (dt.length) {
+    html += '<h3 style="margin:18px 2px 8px;font-size:15px;color:var(--ink2)">Done today · ' + dt.length + '</h3>' + dt.slice().reverse().map(function (s) {
+      return '<div class="stop s-' + esc(s.status) + '"><div class="stop-main"><div class="stop-body"><div class="stop-name">' + esc(s.patient) + '</div>' + stopTags(s) + '</div>' + amtHtml(s) + '</div></div>';
+    }).join('');
+  }
+  list.innerHTML = html;
+}
+function routeUrl() {
+  var pts = openStops().slice();
+  if (S.nearest && S.lastFix) pts.sort(function (a, b) {
+    return (hasPin(a) ? kmBetween(S.lastFix, { lat: num(a.lat), lng: num(a.lng) }) : 1e9) - (hasPin(b) ? kmBetween(S.lastFix, { lat: num(b.lat), lng: num(b.lng) }) : 1e9);
+  });
+  pts = pts.map(destOf).filter(Boolean).slice(0, 10);
+  if (!pts.length) return '';
+  var u = 'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=' + pts[pts.length - 1];
+  if (pts.length > 1) u += '&waypoints=' + pts.slice(0, -1).join('%7C');
+  return u;
+}
+
+/* --------------------------------------------------------------------- cash */
+function cashShellHtml() {
+  return '<div id="dyn"></div><div class="card" id="recv"><h3>Receive cash from the driver</h3><div id="cashlist"></div>' +
+    '<div class="row" style="justify-content:space-between;margin:12px 0 8px"><span class="muted">Expected</span><b class="num" style="font-size:22px" id="c-exp">$0.00</b></div>' +
+    '<label class="f">Cash counted</label><input class="i big num" id="c-counted" inputmode="decimal" placeholder="0.00">' +
+    '<div id="c-diff" class="diff"></div>' +
+    '<button class="btn go full" data-act="settle" id="c-go" disabled>Complete transaction</button></div>' +
+    '<div class="card"><h3>Recent hand-ins</h3><div id="hist"></div></div>';
+}
+function renderCash() {
+  var held = cashHeld(), o = openStops();
+  var owed = o.reduce(function (t, s) { return t + num(s.amount); }, 0);
+  var heldAmt = held.reduce(function (t, s) { return t + num(s.collected); }, 0);
+  $('dyn').innerHTML = '<div class="tiles"><div class="tile dark"><div class="l">Cash with driver now</div><div class="v num">' + cad(heldAmt) + '</div><div class="l">' + held.length + ' deliveries</div></div>' +
+    '<div class="tile"><div class="l">Not collected yet</div><div class="v num">' + cad(owed) + '</div><div class="muted">' + (function (n) { return n + ' open stop' + (n === 1 ? ' owes' : 's owe'); })(o.filter(function (s) { return num(s.amount) > 0; }).length) + '</div></div></div>';
+  var trips = cashTrips(), lateAmt = trips.filter(function (x) { return x.late; }).reduce(function (t, x) { return t + x.amount; }, 0);
+  if (lateAmt > 0) $('dyn').innerHTML = '<div class="card" id="cash-late" style="border:2px solid var(--bad);background:var(--bad-bg)"><b style="color:var(--bad)">' + cad(lateAmt) + ' overdue</b> — cash must come back within ' + CASH_DAYS + ' days of the trip.</div>' + $('dyn').innerHTML;
+  $('dyn').innerHTML += '<div class="card" id="trips"><h3>Net cash due from driver, by trip</h3>' + (trips.length ? trips.map(function (tr) {
+    return '<div class="trip' + (tr.late ? ' late' : '') + '" data-trip="' + tr.day + '"><div style="flex:1"><b>' + esc(weekday(tr.day)) + ' trip</b><br><span class="muted">' + tr.stops.length + ' cash deliver' + (tr.stops.length === 1 ? 'y' : 'ies') + ' · bring back by ' + esc(weekday(tr.due)) + '</span></div>' +
+      '<div style="text-align:right"><b class="num" style="font-size:19px">' + cad(tr.amount) + '</b><br><span class="due ' + (tr.late ? 'bad' : tr.left === 0 ? 'warn' : 'ok') + '">' + dueText(tr) + '</span></div>' +
+      '<button class="btn ghost sm" data-act="trip:' + tr.day + '">Receive</button></div>';
+  }).join('') + '<div class="trip total"><b>Total due</b><b class="num">' + cad(heldAmt) + '</b></div>' : '<div class="muted">Nothing due. The driver has handed in all cash.</div>') + '</div>';
+  held.forEach(function (s) { if (S.cashSel[s.id] === undefined) S.cashSel[s.id] = true; });
+  $('cashlist').innerHTML = held.length ? held.map(function (s) {
+    return '<label class="cashrow"><input type="checkbox" data-cash="' + esc(s.id) + '"' + (S.cashSel[s.id] ? ' checked' : '') + '>' +
+      '<span class="grow" style="flex:1"><b>' + esc(s.patient) + '</b><br><span class="muted">' + esc(niceDate(dayOf(s.deliveredAt))) + ' ' + esc(timeOf(s.deliveredAt)) +
+      (num(s.collected) !== num(s.amount) ? ' · owed ' + cad(s.amount) : '') + '</span></span><b class="num">' + cad(s.collected) + '</b></label>';
+  }).join('') : '<div class="muted">The driver is not holding any cash.</div>';
+  updateCashTotals();
+  var sets = V().settlements;
+  $('hist').innerHTML = sets.length ? sets.slice(0, 12).map(function (z) {
+    var d = num(z.diff);
+    return '<div class="hist"><span>' + esc(niceDate(dayOf(z.ts))) + ' · ' + z.count + ' stop' + (z.count === 1 ? '' : 's') + (z._pending ? ' · saved on phone' : '') + '</span>' +
+      '<span class="num"><b>' + cad(z.counted) + '</b> ' + (d === 0 ? '<span style="color:var(--go);font-weight:800">balanced</span>' : '<span style="color:var(--bad);font-weight:800">' + (d > 0 ? 'over ' : 'short ') + cad(Math.abs(d)) + '</span>') + '</span></div>';
+  }).join('') : '<div class="muted">No hand-ins yet.</div>';
+}
+function selectedCash() { return cashHeld().filter(function (s) { return S.cashSel[s.id]; }); }
+function updateCashTotals() {
+  var sel = selectedCash(), exp = sel.reduce(function (t, s) { return t + num(s.collected); }, 0);
+  if (!$('c-exp')) return;
+  $('c-exp').textContent = cad(exp);
+  var v = $('c-counted').value.trim(), d = num(v) - exp;
+  var diff = $('c-diff');
+  if (v === '') { diff.textContent = ''; diff.className = 'diff'; }
+  else if (Math.abs(d) < 0.005) { diff.textContent = 'Balances exactly'; diff.className = 'diff ok'; }
+  else { diff.textContent = (d > 0 ? 'Over by ' : 'Short by ') + cad(Math.abs(d)); diff.className = 'diff bad'; }
+  $('c-go').disabled = !sel.length || v === '';
+}
+function doSettle() {
+  var sel = selectedCash(); if (!sel.length) return;
+  var counted = money($('c-counted').value);
+  enqueue({ type: 'settle', settlementId: uid(), ids: sel.map(function (s) { return s.id; }), counted: counted });
+  $('c-counted').value = ''; S.cashSel = {};
+  var exp = sel.reduce(function (t, s) { return t + num(s.collected); }, 0), d = num(counted) - exp;
+  toast(Math.abs(d) < 0.005 ? 'Received ' + cad(counted) + ' — balances exactly.' : 'Received ' + cad(counted) + ' — ' + (d > 0 ? 'over' : 'short') + ' by ' + cad(Math.abs(d)) + '. Logged.', 5000);
+}
+
+/* ---------------------------------------------------------------- driver tab */
+function renderDriverTab() {
+  var loc = S.snap.driverLoc, o = openStops(), dt = doneToday();
+  var h = '<div class="tiles"><div class="tile"><div class="l">Waiting</div><div class="v num">' + o.length + '</div></div><div class="tile"><div class="l">Done today</div><div class="v num">' + dt.length + '</div></div></div>';
+  if (!loc) h += '<div class="card"><b>No driver location yet.</b><p class="muted">It appears once the driver opens the app in Driver mode with location allowed and has signal.</p></div>';
+  else {
+    var stale = Date.now() - loc.ts > 10 * 60000;
+    h += '<div class="card"><b>' + (stale ? 'Last known driver location' : 'Driver location') + '</b> <span class="muted">· ' + ago(loc.ts) + '</span>' +
+      (stale ? '<p class="muted">No update for a while — the driver may be in a no-signal area. It updates as soon as the phone has signal.</p>' : '') +
+      (S.net !== 'offline' ? '<iframe class="map-prev" style="height:260px;margin-top:10px" loading="lazy" src="https://maps.google.com/maps?q=' + loc.lat + ',' + loc.lng + '&z=14&output=embed"></iframe>' : '') +
+      '<a class="btn nav full" href="' + pinUrl(loc.lat, loc.lng) + '" target="_blank" rel="noopener">Open in Google Maps</a></div>';
+  }
+  var last = dt.slice(-5).reverse();
+  if (last.length) h += '<div class="card"><h3>Latest finished</h3>' + last.map(function (s) { return '<div class="hist"><span>' + esc(s.patient) + '</span><span>' + esc(statusLabel(s.status)) + ' ' + esc(timeOf(s.deliveredAt)) + '</span></div>'; }).join('') + '</div>';
+  $('dyn').innerHTML = h;
+}
+
+/* ------------------------------------------------------------------- sheets */
+function openSheet(state) { S.sh = state; var el = $('sheet'); el.classList.remove('hidden'); el.innerHTML = '<div class="sheet-in" id="sheet-in"></div>'; buildSheet(); }
+function closeSheet() { S.sh = null; var el = $('sheet'); el.classList.add('hidden'); el.innerHTML = ''; }
+
+function buildSheet() {
+  var sh = S.sh, box = $('sheet-in'); if (!sh || !box) return;
+  if (sh.kind === 'complete') {
+    var s = findStop(V().stops, sh.id); if (!s) { closeSheet(); return; }
+    var owes = num(s.amount) > 0;
+    box.innerHTML = '<div class="sheet-head"><div><h2>' + esc(s.patient) + '</h2><div class="muted">' + esc(s.address || '') + '</div>' +
+      (owes ? '<div style="color:var(--owe);font-weight:800;margin-top:4px">Owing ' + cad(s.amount) + '</div>' : '<div style="color:var(--go);font-weight:800;margin-top:4px">Prepaid — nothing to collect</div>') +
+      '</div><button class="x" data-act="close-sheet">&times;</button></div>' +
+      '<div id="sh-gps"></div>' +
+      '<div class="seg">' + [['delivered', 'Delivered'], ['no_answer', 'No answer'], ['returned', 'Returned']].map(function (o) {
+        return '<button data-act="outcome:' + o[0] + '" id="oc-' + o[0] + '">' + o[1] + '</button>'; }).join('') + '</div>' +
+      '<input type="file" accept="image/*" capture="environment" id="sh-file" class="hidden">' +
+      '<button class="btn ghost full mb" data-act="photo" id="sh-photo">Take photo of package</button><div id="sh-prev"></div>' +
+      (owes ? '<div class="owebox" id="sh-money"><label class="f">Type the amount you received (owing ' + cad(s.amount) + ')</label>' +
+        '<input class="i big num" id="sh-amt" inputmode="decimal" placeholder="0.00" autocomplete="off"><div id="sh-amtw" class="warn"></div>' +
+        '<div class="seg seg2" style="margin:10px 0 0"><button data-act="method:cash" id="m-cash">Cash</button><button data-act="method:card" id="m-card">Card</button></div></div>' : '') +
+      '<label class="f">Note (optional)</label><input class="i mb" id="sh-note" placeholder="Left with neighbour, call patient…">' +
+      '<button class="btn go full" data-act="save-complete" id="sh-save">Save</button>';
+    grabGps();
+  } else if (sh.kind === 'pin' || sh.kind === 'new') {
+    var st = sh.kind === 'pin' ? findStop(V().stops, sh.id) : null;
+    box.innerHTML = '<div class="sheet-head"><div><h2>' + (sh.kind === 'new' ? 'New patient here' : 'Pin ' + esc(st ? st.patient : '')) + '</h2>' +
+      '<div class="muted">Saves the exact spot you are standing. Works with no cell signal.</div></div><button class="x" data-act="close-sheet">&times;</button></div>' +
+      '<div id="sh-gps"></div><div id="sh-map"></div>' +
+      '<button class="btn ghost full mb" data-act="retry-gps">Try again / refresh location</button>' +
+      (sh.kind === 'new' ?
+        '<label class="f">Patient last name</label><input class="i mb" id="n-name" autocomplete="off">' +
+        '<label class="f">Address or landmark (optional)</label><input class="i mb" id="n-addr" placeholder="Blue barn, 2nd driveway">' +
+        '<label class="f">$ owing (blank if prepaid)</label><input class="i num mb" id="n-amt" inputmode="decimal">' +
+        '<label class="row mb" style="font-weight:700"><input type="checkbox" id="n-now" checked style="width:22px;height:22px"> Delivering it right now</label>' : '') +
+      '<button class="btn go full" data-act="' + (sh.kind === 'new' ? 'save-new' : 'save-pin') + '" id="sh-save">Save pin</button>';
+    grabGps();
+  } else if (sh.kind === 'settings') {
+    box.innerHTML = '<div class="sheet-head"><h2>Settings</h2><button class="x" data-act="close-sheet">&times;</button></div>' +
+      '<div class="card"><b>This phone is used by</b><div class="seg seg2" style="margin-top:10px"><button data-act="role:pharmacy" class="' + (S.cfg.role === 'pharmacy' ? 'on' : '') + '">Pharmacy</button><button data-act="role:driver" class="' + (S.cfg.role === 'driver' ? 'on' : '') + '">Driver</button></div></div>' +
+      '<div class="card"><b>Sync</b><p class="muted">Last update: ' + ago(S.meta.lastSync) + ' · ' + S.out.length + ' change' + (S.out.length === 1 ? '' : 's') + ' waiting to send.</p><button class="btn ghost full" data-act="sync">Update now</button></div>' +
+      '<div class="card"><label class="f">Server address</label><textarea class="i mb" id="st-url" rows="3">' + esc(S.cfg.url) + '</textarea><button class="btn ghost full" data-act="save-url">Save address</button></div>' +
+      '<div class="card"><button class="btn ghost full mb" data-act="lock">Lock this phone (asks for PIN again)</button>' +
+      '<button class="btn bad full" data-act="wipe">Erase data on this phone</button>' +
+      '<p class="muted">Version ' + APP_VERSION + (IN_GAS ? ' · web' : '') + '</p></div>';
+  }
+  refreshSheet();
+}
+function grabGps() {
+  var sh = S.sh; if (!sh) return;
+  sh.gpsBusy = true; sh.fixErr = null; refreshSheet();
+  getFix(30000).then(function (f) { if (S.sh !== sh) return; sh.fix = f; sh.gpsBusy = false; refreshSheet(); })
+    .catch(function (e) { if (S.sh !== sh) return; sh.gpsBusy = false; sh.fixErr = e; refreshSheet(); });
+}
+function refreshSheet() {
+  var sh = S.sh; if (!sh || sh.kind === 'settings') return;
+  var g = $('sh-gps');
+  if (g) {
+    if (sh.fix) g.innerHTML = '<div class="gps ok">Location saved: ' + sh.fix.lat.toFixed(5) + ', ' + sh.fix.lng.toFixed(5) + ' (within ' + sh.fix.acc + ' m)' + (sh.gpsBusy ? ' · refreshing…' : '') + '</div>';
+    else if (sh.gpsBusy) g.innerHTML = '<div class="gps wait">Getting GPS location… (works without cell signal)</div>';
+    else if (sh.fixErr) g.innerHTML = '<div class="gps err">' + esc(gpsErrText(sh.fixErr)) + '</div>';
+  }
+  var mp = $('sh-map');
+  if (mp) mp.innerHTML = (sh.fix && navigator.onLine && S.net !== 'offline') ? '<iframe class="map-prev" loading="lazy" src="https://maps.google.com/maps?q=' + sh.fix.lat + ',' + sh.fix.lng + '&z=18&output=embed"></iframe>' : '';
+  var saveBtn = $('sh-save');
+  if (sh.kind === 'complete') {
+    var s = findStop(V().stops, sh.id); if (!s) return;
+    sh.outcome = sh.outcome || 'delivered'; sh.method = sh.method || 'cash';
+    ['delivered', 'no_answer', 'returned'].forEach(function (o) { var b = $('oc-' + o); if (b) b.className = sh.outcome === o ? 'on' : ''; });
+    var owes = num(s.amount) > 0, moneyBox = $('sh-money');
+    if (moneyBox) moneyBox.classList.toggle('hidden', sh.outcome !== 'delivered');
+    var mc = $('m-cash'), mk = $('m-card');
+    if (mc) { mc.className = sh.method === 'cash' ? 'on cash' : ''; mk.className = sh.method === 'card' ? 'on card' : ''; }
+    var amt = $('sh-amt'), need = owes && sh.outcome === 'delivered' && (!amt || amt.value.trim() === '');
+    var w = $('sh-amtw');
+    if (w) w.textContent = (amt && amt.value.trim() !== '' && Math.abs(num(amt.value) - num(s.amount)) >= 0.005) ? 'Does not match: owing ' + cad(s.amount) + ', you typed ' + cad(amt.value) + '. Save only if that is what you got.' : '';
+    var ph = $('sh-photo'); if (ph) ph.textContent = sh.photo ? 'Photo attached — tap to retake' : (sh.photoBusy ? 'Processing photo…' : 'Take photo of package');
+    var pv = $('sh-prev'); if (pv) pv.innerHTML = sh.photo ? '<img class="photo-prev" src="' + sh.photo + '" alt="">' : '';
+    saveBtn.disabled = need;
+    saveBtn.textContent = need ? 'Type the amount received first' : 'Save';
+  } else if (saveBtn) {
+    var nameOk = sh.kind !== 'new' || ($('n-name') && $('n-name').value.trim());
+    saveBtn.disabled = !sh.fix || !nameOk;
+    saveBtn.textContent = !sh.fix ? 'Waiting for GPS…' : (!nameOk ? 'Type the patient name' : (sh.kind === 'new' ? 'Save patient and pin' : 'Save pin'));
+  }
+}
+function saveComplete() {
+  var sh = S.sh, s = findStop(V().stops, sh.id); if (!s) return;
+  var owes = num(s.amount) > 0, amt = $('sh-amt');
+  var op = { type: 'complete', id: s.id, status: sh.outcome || 'delivered', note: $('sh-note').value.trim(),
+    lat: sh.fix ? sh.fix.lat : '', lng: sh.fix ? sh.fix.lng : '', photo: sh.photo || '' };
+  if (owes && op.status === 'delivered') { op.collected = money(amt.value); op.method = sh.method || 'cash'; }
+  closeSheet();
+  enqueue(op);
+  toast(op.status === 'delivered' ? 'Saved: ' + s.patient + ' delivered' + (op.collected ? ', ' + cad(op.collected) + ' ' + op.method : '') + '.' : 'Saved: ' + s.patient + ' not delivered.');
+}
+function savePin() {
+  var sh = S.sh, s = findStop(V().stops, sh.id); if (!s || !sh.fix) return;
+  closeSheet();
+  enqueue({ type: 'pin', patient: s.patient, lat: sh.fix.lat, lng: sh.fix.lng, address: s.address || '' });
+  toast('Pinned ' + s.patient + '. Next time the route goes straight here.');
+}
+function saveNew() {
+  var sh = S.sh; if (!sh.fix) return;
+  var name = $('n-name').value.trim(); if (!name) return;
+  var now = $('n-now').checked, id = uid();
+  var maxSeq = openStops().reduce(function (m, s) { return Math.max(m, num(s.seq)); }, 0);
+  enqueue({ type: 'add', stop: { id: id, created: new Date().toISOString(), date: today(), seq: String(maxSeq + 1), patient: name,
+    address: $('n-addr').value.trim(), amount: money($('n-amt').value), lat: sh.fix.lat, lng: sh.fix.lng, addedBy: 'driver' } });
+  var fix = sh.fix;
+  closeSheet();
+  toast('Saved ' + name + ' with this location.');
+  if (now) { openSheet({ kind: 'complete', id: id, fix: fix }); }
+}
+
+/* --------------------------------------------------------------------- help */
+function helpHtml() {
+  if (S.cfg.role === 'driver') return '<div class="card help"><h3>At every stop</h3><ol>' +
+    '<li>Tap <b>Navigate</b> (or <b>Route in Google Maps</b> for the whole run).</li>' +
+    '<li>At the door, tap the green <b>finish</b> button.</li><li>Take a photo of the package.</li>' +
+    '<li>If money is owed, <b>type what you received</b> and pick Cash or Card.</li><li>Tap <b>Save</b>.</li></ol>' +
+    '<h3>Nobody home</h3><p>Tap finish, pick <b>No answer</b> or <b>Returned</b>, add a note, Save. The pharmacy sees it and can send it again.</p>' +
+    '<h3>Rural address / no address</h3><p>Standing at the door, tap <b>Pin here</b> on the stop, or <b>+ New patient here</b> for someone not on the list. GPS works with no cell signal.</p>' +
+    '<h3>No signal</h3><p>Keep working. Everything saves on the phone and sends by itself when signal comes back. The top button shows how many changes are waiting.</p>' +
+    '<h3>Cash</h3><p>Keep all cash together. The pharmacy counts it and signs it in; until then it shows as "Cash you hold".</p></div>';
+  return '<div class="card help"><h3>Add deliveries</h3><p>Type the last name and the amount owing (leave it blank if prepaid). Known patients pop up — tap one to fill the address and pin. Deliveries stay on the driver\'s list every day until they are finished.</p>' +
+    '<h3>Delivered or not</h3><p>Every delivery shows <b>Not delivered yet</b>, <b>Delivered</b> (time and money taken) or <b>No answer / Returned</b>. For a failed one, tap <b>Send again with the driver</b>.</p>' +
+    '<h3>Rural pins</h3><p>Paste coordinates (in Google Maps, long-press the driveway and copy the numbers) into the pin box. The driver can also pin it at the door.</p>' +
+    '<h3>Cash from the driver</h3><ol><li>Open <b>Cash</b>. Everything the driver holds is listed.</li><li>Count the cash and type the total.</li><li>It says <b>Balances exactly</b> or <b>Short by $…</b>. Tap <b>Complete transaction</b>.</li></ol>' +
+    '<h3>Where the data is</h3><p>The Google Sheet <b>Delivery Run Sheet Data</b> in the pharmacy Drive. Photos are in the <b>Delivery Photos</b> folder.</p>' +
+    '<h3>Privacy</h3><p>Last names only. No drug names or health details.</p></div>';
+}
+
+/* ------------------------------------------------------------------- events */
+document.addEventListener('click', function (e) {
+  var el = e.target.closest('[data-act]'); if (!el) return;
+  var a = el.getAttribute('data-act'), parts = a.split(':'), cmd = parts[0], arg = parts.slice(1).join(':');
+  if (cmd === 'gate-go') gateGo();
+  else if (cmd === 'gate-adv') $('g-adv').classList.toggle('hidden');
+  else if (cmd === 'role') { S.cfg.role = arg; saveCfg(); S.tab = 'stops'; S.filter = 'open'; closeSheet(); renderAll(); startDriverLoc(); scheduleSync(100); }
+  else if (cmd === 'tab') { S.tab = arg; S.expanded = null; renderAll(); }
+  else if (cmd === 'filter') { S.filter = arg; S.expanded = null; renderDynamic(); }
+  else if (cmd === 'sync') { S.err = ''; sync(); }
+  else if (cmd === 'settings') openSheet({ kind: 'settings' });
+  else if (cmd === 'close-sheet') closeSheet();
+  else if (cmd === 'add-more') { $('a-more').classList.toggle('hidden'); }
+  else if (cmd === 'trip') {
+    S.cashSel = {}; cashHeld().forEach(function (x) { S.cashSel[x.id] = (dayOf(x.deliveredAt) || today()) === arg; });
+    renderCash(); var rv = $('recv'); if (rv && rv.scrollIntoView) rv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  else if (cmd === 'add-stop') addStopFromForm();
+  else if (cmd === 'pick') {
+    var p = S.suggest && S.suggest[+arg]; if (!p) return;
+    $('a-name').value = p.name; if (p.address) $('a-addr').value = p.address; if (p.phone && $('a-phone')) $('a-phone').value = p.phone;
+    S.add = { pin: hasPin(p) ? { lat: p.lat, lng: p.lng } : null };
+    $('a-sugg').innerHTML = ''; $('a-amt').focus();
+  }
+  else if (cmd === 'expand') { S.expanded = S.expanded === arg ? null : arg; renderDynamic(); }
+  else if (cmd === 'save-edit') {
+    var s = findStop(V().stops, arg); if (!s) return;
+    var pinT = $('e-pin').value, pin = parseCoords(pinT);
+    if (pinT.trim() && !pin) { toast('That pin could not be read. Paste coordinates like 49.81, -97.12.'); return; }
+    var f = {};
+    if ($('e-addr').value.trim() !== (s.address || '')) f.address = $('e-addr').value.trim();
+    if ($('e-phone').value.trim() !== (s.phone || '')) f.phone = $('e-phone').value.trim();
+    if ($('e-note').value.trim() !== (s.note || '')) f.note = $('e-note').value.trim();
+    if (money($('e-amt').value) !== money(s.amount)) f.amount = money($('e-amt').value);
+    if (pin) { f.lat = pin.lat; f.lng = pin.lng; }
+    if (Object.keys(f).length) { enqueue({ type: 'update', id: s.id, fields: f }); toast('Saved.'); }
+    S.expanded = null; renderDynamic();
+  }
+  else if (cmd === 'resend') { enqueue({ type: 'update', id: arg, fields: { status: 'pending', date: today() } }); toast('Back on the driver\'s list.'); }
+  else if (cmd === 'cancel-stop') { if (confirmBox('Cancel this delivery? It will leave the driver\'s list.')) { enqueue({ type: 'update', id: arg, fields: { status: 'cancelled' } }); S.expanded = null; } }
+  else if (cmd === 'move') {
+    var id = parts[1], dir = +parts[2], list = openStops(), i = -1;
+    for (var k = 0; k < list.length; k++) if (list[k].id === id) i = k;
+    var j = i + dir; if (i < 0 || j < 0 || j >= list.length) return;
+    var tmp = list[i]; list[i] = list[j]; list[j] = tmp;
+    list.forEach(function (x, n) { if (num(x.seq) !== n + 1) enqueue({ type: 'update', id: x.id, fields: { seq: String(n + 1) } }); });
+  }
+  else if (cmd === 'complete') openSheet({ kind: 'complete', id: arg });
+  else if (cmd === 'pin-here') openSheet({ kind: 'pin', id: arg });
+  else if (cmd === 'new-here') openSheet({ kind: 'new' });
+  else if (cmd === 'retry-gps') grabGps();
+  else if (cmd === 'outcome') { S.sh.outcome = arg; refreshSheet(); }
+  else if (cmd === 'method') { S.sh.method = arg; refreshSheet(); }
+  else if (cmd === 'photo') $('sh-file').click();
+  else if (cmd === 'save-complete') saveComplete();
+  else if (cmd === 'save-pin') savePin();
+  else if (cmd === 'save-new') saveNew();
+  else if (cmd === 'nearest') {
+    S.nearest = !S.nearest;
+    if (S.nearest && !S.lastFix) { toast('Getting your location…'); getFix(20000).then(renderDynamic, function (er) { toast(gpsErrText(er), 5000); }); }
+    renderDynamic();
+  }
+  else if (cmd === 'settle') doSettle();
+  else if (cmd === 'save-url') { var u2 = $('st-url').value.trim(); if (u2) { S.cfg.url = u2; saveCfg(); S.err = ''; closeSheet(); toast('Server address saved. Checking…'); sync(); } }
+  else if (cmd === 'lock') { if (confirmBox('Lock this phone? Saved changes stay and send after you unlock.')) { S.cfg.pin = ''; saveCfg(); closeSheet(); renderAll(); } }
+  else if (cmd === 'wipe') {
+    if (S.out.length && !confirmBox(S.out.length + ' changes have not been sent yet and will be lost. Erase anyway?')) return;
+    if (!S.out.length && !confirmBox('Erase all delivery data on this phone? (The Google Sheet is not touched.)')) return;
+    [K.snap, K.out, K.meta].forEach(function (k) { try { localStorage.removeItem(k); } catch (er) {} });
+    S.snap = { stops: [], patients: [], settlements: [], driverLoc: null }; S.out = []; S.meta = { lastSync: 0 };
+    closeSheet(); computeView(); renderAll(); sync();
+  }
+});
+function confirmBox(msg) { try { return window.confirm(msg); } catch (e) { return true; } }
+
+document.addEventListener('input', function (e) {
+  var id = e.target.id;
+  if (id === 'a-name') { $('a-sugg').innerHTML = suggestHtml(e.target.value); S.add = {}; }
+  else if (id === 'a-pin') { var c = parseCoords(e.target.value); $('a-pinmsg').textContent = e.target.value.trim() ? (c ? 'Pin read: ' + c.lat + ', ' + c.lng : 'Paste coordinates (long-press the spot in Google Maps) or a full maps link.') : ''; }
+  else if (id === 'c-counted') updateCashTotals();
+  else if (id === 'sh-amt' || id === 'n-name') refreshSheet();
+});
+document.addEventListener('change', function (e) {
+  var t = e.target;
+  if (t.hasAttribute && t.hasAttribute('data-cash')) { S.cashSel[t.getAttribute('data-cash')] = t.checked; updateCashTotals(); }
+  else if (t.id === 'sh-file' && t.files && t.files[0] && S.sh) {
+    var sh = S.sh; sh.photoBusy = true; refreshSheet();
+    compressPhoto(t.files[0]).then(function (d) { sh.photo = d; sh.photoBusy = false; refreshSheet(); }, function () { sh.photoBusy = false; refreshSheet(); toast('Could not read that photo.'); });
+  }
+});
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && e.target && (e.target.id === 'a-amt' || e.target.id === 'a-name' || e.target.id === 'a-addr')) { e.preventDefault(); addStopFromForm(); }
+  if (e.key === 'Enter' && e.target && (e.target.id === 'g-pin' || e.target.id === 'g-pin2')) { e.preventDefault(); gateGo(); }
+});
+$('sheet').addEventListener('click', function (e) { if (e.target.id === 'sheet') closeSheet(); });
+
+document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { scheduleSync(200); if (S.cfg.role === 'driver') getFix(20000).catch(function () {}); } });
+window.addEventListener('online', function () { scheduleSync(200); });
+setInterval(function () { if (document.visibilityState === 'visible') sync(); }, 60000);
+setInterval(function () { if (S.cfg.pin && S.cfg.role && !S.sh) renderPill(); }, 30000);
+
+// Android back button closes an open panel instead of leaving the app.
+(function () {
+  try {
+    var App = window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.App;
+    if (App && App.addListener) App.addListener('backButton', function () {
+      if (S.sh) closeSheet(); else if (S.tab !== 'stops') { S.tab = 'stops'; renderAll(); } else if (App.minimizeApp) App.minimizeApp();
+    });
+  } catch (e) {}
+})();
+
+// Installed web app (iPhone / Android Chrome): keep a copy of the app on the phone so it opens with no signal,
+// and ask the phone not to clear saved data. Not used inside the Android APK or the Google-hosted page.
+(function () {
+  try {
+    if (!IN_APP && !IN_GAS && (location.protocol === 'https:' || location.hostname === 'localhost') && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(function () {});
+    }
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
+  } catch (e) {}
+})();
+
+computeView();
+renderAll();
+startDriverLoc();
+idbStart(function () {
+  idbGet(K.out, function (saved) {
+    var have = {}, extra = [];
+    S.out.forEach(function (o) { have[o.opId] = 1; });
+    (saved || []).forEach(function (o) { if (o && o.opId && !have[o.opId]) extra.push(o); });
+    if (extra.length) {
+      S.out = S.out.concat(extra).sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); });
+      try { localStorage.setItem(K.out, JSON.stringify(S.out)); } catch (e) {}
+      computeView(); renderAll(); if (S.cfg.pin) scheduleSync(300);
+    }
+    var w = idbWaiting; idbWaiting = [];
+    idbPut(K.out, S.out);
+    w.length = 0;
+  });
+});
+if (S.cfg.pin) scheduleSync(50);
+</script>
+</body>
+</html>
