@@ -157,7 +157,7 @@ input.i:focus,textarea.i:focus{outline:none;border-color:var(--nav)}
 <script>
 'use strict';
 var DEFAULT_URL = '';
-var APP_VERSION = '2.2.0';
+var APP_VERSION = '2.2.1';
 var K = { cfg: 'drs_cfg', snap: 'drs_snap', out: 'drs_outbox', meta: 'drs_meta' };
 var IN_GAS = !!(window.google && google.script && google.script.run);
 
@@ -214,6 +214,9 @@ var S = {
     var m = /[#&]s=([^&]+)/.exec(location.hash || '');
     var u = m ? decodeURIComponent(m[1]) : '';
     if (/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(u)) S.cfg.url = u;
+    // Role link: ...&r=driver or &r=pharmacy skips the "Who uses this phone?" question on first setup.
+    var r = /[#&]r=(driver|pharmacy)\b/.exec(location.hash || '');
+    if (r && !S.cfg.role) S.cfg.role = r[1];
   } catch (e) {}
 })();
 if (!S.cfg.url) S.cfg.url = DEFAULT_URL;
