@@ -157,13 +157,14 @@ input.i:focus,textarea.i:focus{outline:none;border-color:var(--nav)}
 <script>
 'use strict';
 var DEFAULT_URL = '';
-var APP_VERSION = '2.3.0';
+var APP_VERSION = '2.3.1';
 var K = { cfg: 'drs_cfg', snap: 'drs_snap', out: 'drs_outbox', meta: 'drs_meta' };
 var IN_GAS = !!(window.google && google.script && google.script.run);
 
 /* ----------------------------------------------------------------- storage */
 function load(k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
 function save(k, v) {
+  if (S.inactive) return false; // another tab is in charge of saved data
   if (k === K.out) idbPut(k, v);
   try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; }
 }
@@ -204,7 +205,7 @@ var S = {
   out: load(K.out, []),
   meta: load(K.meta, { lastSync: 0 }),
   tab: 'stops', filter: 'open', syncing: false, again: false, net: 'unknown', err: '',
-  cashSel: {}, lastFix: null, nearest: false, expanded: null, view: null, sh: null, add: {}
+  cashSel: {}, acked: {}, inactive: false, lastFix: null, nearest: false, expanded: null, view: null, sh: null, add: {}
 };
 // Setup link: ...#s=<server address>. Lets the iPhone home-screen app learn the server address
 // without it being written into the public copy of the app. The address stays in the link so
@@ -393,7 +394,8 @@ var syncT;
 function scheduleSync(ms) { clearTimeout(syncT); syncT = setTimeout(sync, ms == null ? 300 : ms); }
 
 function sync() {
-  if (!S.cfg.pin) return Promise.resolve();
+  // pinBad: the team PIN was changed on the server. Sending waits until the new PIN is typed in; the app keeps working.
+  if (!S.cfg.pin || S.cfg.pinBad || S.inactive) return Promise.resolve();
   if (S.syncing) { S.again = true; return Promise.resolve(); }
   S.syncing = true; renderPill();
   // Upload size adapts to the signal: starts small, halves after a failed send, grows after a good one.
@@ -410,16 +412,17 @@ function sync() {
   return callApi(body, Math.min(180000, 30000 + Math.round(size / 3))).then(function (res) {
     if (!res || !res.ok) {
       if (res && (res.error === 'bad_pin' || res.error === 'pin_not_set')) {
-        S.cfg.pin = ''; saveCfg(); S.net = 'online';
+        // Keep the run sheet on screen (the driver may be on the road with no signal); just stop sending.
+        S.cfg.pinBad = true; saveCfg(); S.net = 'online';
         toast('The team PIN was changed. Enter the new PIN. Your saved work is kept.', 6000);
-        renderAll(); return;
+        return;
       }
       throw new Error((res && (res.message || res.error)) || 'server');
     }
     var done = {};
     var retryPhotos = [];
     (res.applied || []).forEach(function (a) {
-      if (a.ok || a.permanent) done[a.opId] = true;
+      if (a.ok || a.permanent) { done[a.opId] = true; S.acked[a.opId] = 1; }
       if (!a.ok && a.permanent) toast('Could not save one change: ' + errText(a.error), 5000);
       if (a.ok && a.photoRetry) {
         // Delivery saved, but Google Drive did not take the photo this time: keep the photo and send it again on its own.
@@ -451,6 +454,7 @@ function errText(code) {
 }
 
 function enqueue(op) {
+  if (S.inactive) return;
   op.opId = uid();
   op.at = op.at || new Date().toISOString();
   op.by = S.cfg.role || '';
@@ -541,6 +545,7 @@ function cashHeld() { return V().stops.filter(function (s) { return s.status ===
 /* ------------------------------------------------------------------ rendering */
 function renderAll() {
   var app = $('app');
+  if (S.inactive) { closeSheet(); app.innerHTML = inactiveHtml(); return; }
   if (!S.cfg.pin) { app.innerHTML = gateHtml(); afterGate(); return; }
   if (!S.cfg.role) { app.innerHTML = roleHtml(); return; }
   computeView();
@@ -570,12 +575,14 @@ function renderAll() {
 function renderPill() {
   var p = $('pill'); if (!p) return;
   var n = S.out.length;
-  if (S.syncing) { p.className = 'pill busy'; p.innerHTML = '<span class="dot"></span>' + (n ? 'Sending ' + n + '…' : 'Updating…'); }
+  if (S.cfg.pinBad) { p.className = 'pill off'; p.innerHTML = '<span class="dot"></span>' + (n ? n + ' saved · PIN needed' : 'PIN needed'); }
+  else if (S.syncing) { p.className = 'pill busy'; p.innerHTML = '<span class="dot"></span>' + (n ? 'Sending ' + n + '…' : 'Updating…'); }
   else if (S.net === 'offline') { p.className = 'pill off'; p.innerHTML = '<span class="dot"></span>' + (n ? n + ' saved on phone' : 'No signal'); }
   else if (n) { p.className = 'pill off'; p.innerHTML = '<span class="dot"></span>' + n + ' saved on phone'; }
   else { p.className = 'pill ok'; p.innerHTML = '<span class="dot"></span>' + (S.meta.lastSync ? 'Up to date' : 'Tap to update'); }
   var b = $('banner'); if (!b) return;
-  if (S.err) b.innerHTML = '<div class="banner err">' + esc(S.err) + '</div>';
+  if (S.cfg.pinBad) b.innerHTML = '<div class="banner err" id="pin-banner" data-act="repin" style="cursor:pointer">Team PIN changed — enter the new PIN. Tap here.' + (n ? ' ' + n + ' change' + (n > 1 ? 's are' : ' is') + ' saved on this phone and will send after that.' : '') + '</div>';
+  else if (S.err) b.innerHTML = '<div class="banner err">' + esc(S.err) + '</div>';
   else if (S.net === 'offline') b.innerHTML = '<div class="banner off">No signal. Keep working — ' + (n ? n + ' change' + (n > 1 ? 's are' : ' is') + ' saved on this phone and' : 'changes are saved on this phone and') + ' will send by themselves. Last update ' + ago(S.meta.lastSync) + '.</div>';
   else b.innerHTML = '';
 }
@@ -619,25 +626,51 @@ function afterGate() {
     } else msg.textContent = '';
   }).catch(function () { msg.textContent = 'No signal right now. The first unlock needs signal once.'; });
 }
-function gateGo() {
-  var pin = $('g-pin').value.trim(), msg = $('g-msg');
-  var urlBox = $('g-url'); if (urlBox && urlBox.value.trim()) { S.cfg.url = urlBox.value.trim(); saveCfg(); }
+// Shared by the first-time gate and the "team PIN changed" sheet. ids: { pin, pin2, msg, go }; isNew = server has no PIN yet.
+function unlockWith(ids, isNew, done) {
+  var pin = $(ids.pin).value.trim(), msg = $(ids.msg), go = $(ids.go);
   if (pin.length < 4) { msg.textContent = 'The PIN has at least 4 digits.'; return; }
-  $('g-go').disabled = true;
+  go.disabled = true;
   var p;
-  if (S.gateNew) {
-    if ($('g-pin2').value.trim() !== pin) { msg.textContent = 'The two PINs do not match.'; $('g-go').disabled = false; return; }
+  if (isNew) {
+    if ($(ids.pin2).value.trim() !== pin) { msg.textContent = 'The two PINs do not match.'; go.disabled = false; return; }
     p = callApi({ action: 'setPin', pin: pin }, 30000).then(function (r) { if (!r.ok && r.error !== 'pin_already_set') throw new Error(r.error); });
   } else p = Promise.resolve();
-  p.then(function () { return callApi({ action: 'sync', pin: pin, ops: [], device: S.cfg.device }, 45000); }).then(function (r) {
-    if (!r.ok) { msg.textContent = r.error === 'bad_pin' ? 'Wrong PIN.' : r.error === 'locked' ? 'Too many wrong PINs. Wait 15 minutes, then try again.' : 'Server problem: ' + (r.message || r.error); $('g-go').disabled = false; return; }
-    S.cfg.pin = pin; saveCfg();
+  p.then(function () { return callApi({ action: 'sync', pin: pin, ops: [], device: S.cfg.device, role: S.cfg.role }, 45000); }).then(function (r) {
+    if (!r.ok) { msg.textContent = r.error === 'bad_pin' ? 'Wrong PIN.' : r.error === 'locked' ? 'Too many wrong PINs. Wait 15 minutes, then try again.' : r.error === 'pin_not_set' ? 'No team PIN on the server yet. Close this and open it again to create one.' : 'Server problem: ' + (r.message || r.error); go.disabled = false; return; }
+    S.cfg.pin = pin; delete S.cfg.pinBad; saveCfg();
     S.snap = r.data; save(K.snap, S.snap); S.meta.lastSync = Date.now(); save(K.meta, S.meta); S.net = 'online';
-    renderAll(); if (S.out.length) scheduleSync(200);
+    done(); if (S.out.length) scheduleSync(200);
   }).catch(function (e) {
     msg.textContent = (e && e.notJson) ? 'That server address is not answering like the delivery app.' : 'No signal. Connect once to unlock.';
-    $('g-go').disabled = false;
+    go.disabled = false;
   });
+}
+function gateGo() {
+  var urlBox = $('g-url'); if (urlBox && urlBox.value.trim()) { S.cfg.url = urlBox.value.trim(); saveCfg(); }
+  unlockWith({ pin: 'g-pin', pin2: 'g-pin2', msg: 'g-msg', go: 'g-go' }, S.gateNew, renderAll);
+}
+function repinGo() {
+  var sh = S.sh; if (!sh || sh.kind !== 'repin') return;
+  unlockWith({ pin: 'rp-pin', pin2: 'rp-pin2', msg: 'rp-msg', go: 'rp-go' }, sh.isNew, function () {
+    closeSheet(); renderAll(); toast('New PIN saved. Sending your saved changes.', 4000);
+  });
+}
+function afterRepin() {
+  var sh = S.sh, msg = $('rp-msg'); if (!sh || !msg) return;
+  msg.textContent = 'Checking the server…';
+  callApi({ action: 'ping' }, 20000).then(function (r) {
+    if (S.sh !== sh) return;
+    if (r && r.ok && !r.pinSet) {
+      sh.isNew = true; $('rp-new').classList.remove('hidden'); $('rp-go').textContent = 'Create team PIN';
+      msg.textContent = 'No team PIN yet. Pick one (4 or more digits) — everyone will use it.';
+    } else msg.textContent = '';
+  }).catch(function () { if (S.sh === sh) msg.textContent = 'No signal right now. Keep working; enter the PIN when you have signal.'; });
+}
+function inactiveHtml() {
+  return '<div class="gate"><h1>Delivery Run Sheet</h1><div class="card" id="other-tab"><b>Open in another tab</b>' +
+    '<p class="muted">The app is open in another tab or window. Only one can be used at a time, so no change is lost.</p>' +
+    '<button class="btn go full" data-act="use-here" id="use-here">Tap to use here</button></div></div>';
 }
 function roleHtml() {
   return '<div class="gate"><h1>Who uses this phone?</h1><p class="muted">You can change this later in Settings.</p>' +
@@ -926,6 +959,16 @@ function buildSheet() {
       '<div class="card"><button class="btn ghost full mb" data-act="lock">Lock this phone (asks for PIN again)</button>' +
       '<button class="btn bad full" data-act="wipe">Erase data on this phone</button>' +
       '<p class="muted">Version ' + APP_VERSION + (IN_GAS ? ' · web' : '') + '</p></div>';
+  } else if (sh.kind === 'repin') {
+    box.innerHTML = '<div class="sheet-head"><div><h2>Team PIN changed</h2><div class="muted">Enter the new team PIN. Your work stays on this phone and sends after this.</div></div><button class="x" data-act="close-sheet">&times;</button></div>' +
+      '<div class="card">' +
+        '<label class="f">New team PIN</label><input class="i big num mb" id="rp-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN">' +
+        '<div id="rp-new" class="hidden"><label class="f">Type the new PIN again</label><input class="i big num mb" id="rp-pin2" type="password" inputmode="numeric" autocomplete="off"></div>' +
+        '<div id="rp-msg" class="muted mb"></div>' +
+        '<button class="btn go full" data-act="repin-go" id="rp-go">Unlock</button>' +
+      '</div>';
+    afterRepin();
+    return;
   }
   refreshSheet();
 }
@@ -936,7 +979,7 @@ function grabGps() {
     .catch(function (e) { if (S.sh !== sh) return; sh.gpsBusy = false; sh.fixErr = e; refreshSheet(); });
 }
 function refreshSheet() {
-  var sh = S.sh; if (!sh || sh.kind === 'settings') return;
+  var sh = S.sh; if (!sh || sh.kind === 'settings' || sh.kind === 'repin') return;
   var g = $('sh-gps');
   if (g) {
     if (sh.fix) g.innerHTML = '<div class="gps ok">Location saved: ' + sh.fix.lat.toFixed(5) + ', ' + sh.fix.lng.toFixed(5) + ' (within ' + sh.fix.acc + ' m)' + (sh.gpsBusy ? ' · refreshing…' : '') + '</div>';
@@ -1023,7 +1066,11 @@ document.addEventListener('click', function (e) {
   else if (cmd === 'role') { S.cfg.role = arg; saveCfg(); S.tab = 'stops'; S.filter = 'open'; closeSheet(); renderAll(); startDriverLoc(); scheduleSync(100); }
   else if (cmd === 'tab') { S.tab = arg; S.expanded = null; renderAll(); }
   else if (cmd === 'filter') { S.filter = arg; S.expanded = null; renderDynamic(); }
+  else if (cmd === 'sync' && S.cfg.pinBad) openSheet({ kind: 'repin' });
   else if (cmd === 'sync') { S.err = ''; sync(); }
+  else if (cmd === 'repin') openSheet({ kind: 'repin' });
+  else if (cmd === 'use-here') location.reload();
+  else if (cmd === 'repin-go') repinGo();
   else if (cmd === 'settings') openSheet({ kind: 'settings' });
   else if (cmd === 'close-sheet') closeSheet();
   else if (cmd === 'add-more') { $('a-more').classList.toggle('hidden'); }
@@ -1107,6 +1154,7 @@ document.addEventListener('change', function (e) {
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Enter' && e.target && (e.target.id === 'a-amt' || e.target.id === 'a-name' || e.target.id === 'a-addr')) { e.preventDefault(); addStopFromForm(); }
   if (e.key === 'Enter' && e.target && (e.target.id === 'g-pin' || e.target.id === 'g-pin2')) { e.preventDefault(); gateGo(); }
+  if (e.key === 'Enter' && e.target && (e.target.id === 'rp-pin' || e.target.id === 'rp-pin2')) { e.preventDefault(); repinGo(); }
 });
 $('sheet').addEventListener('click', function (e) { if (e.target.id === 'sheet') closeSheet(); });
 
@@ -1136,11 +1184,47 @@ setInterval(function () { if (S.cfg.pin && S.cfg.role && !S.sh) renderPill(); },
   } catch (e) {}
 })();
 
+/* --------------------------------------------------------- one tab at a time */
+// Two tabs on the pharmacy PC would each keep their own list of unsent changes and overwrite each other's.
+// The newest tab takes over. The older one hands over anything it has not saved yet, then stops saving and
+// sending until someone taps "use here" (which reloads it, so it becomes the newest).
+var TAB = { id: uid(), ts: Date.now() }, tabBc = null;
+try { if (window.BroadcastChannel) tabBc = new BroadcastChannel('drs-tabs'); } catch (e) {}
+function tabSend(m) {
+  m.from = TAB.id; m.fromTs = TAB.ts;
+  if (tabBc) { try { tabBc.postMessage(m); } catch (e) {} return; }
+  m.nonce = uid(); // the storage event only fires when the value changes
+  try { localStorage.setItem('drs_tabmsg', JSON.stringify(m)); } catch (e) {}
+}
+function onTabMsg(m) {
+  if (!m || m.from === TAB.id || S.inactive) return;
+  if (m.type === 'claim' && (m.fromTs > TAB.ts || (m.fromTs === TAB.ts && m.from > TAB.id))) {
+    tabSend({ type: 'yield', to: m.from, out: S.out });
+    clearTimeout(syncT); S.inactive = true; renderAll();
+  } else if (m.type === 'yield' && m.to === TAB.id) {
+    // Changes the other tab had not written to storage yet. Already-sent ones are skipped; a repeat would be harmless anyway.
+    var have = {}, extra = [];
+    S.out.forEach(function (o) { have[o.opId] = 1; });
+    (m.out || []).forEach(function (o) { if (o && o.opId && !have[o.opId] && !S.acked[o.opId]) extra.push(o); });
+    if (extra.length) {
+      S.out = S.out.concat(extra).sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); });
+      save(K.out, S.out); computeView(); renderDynamic(); scheduleSync(300);
+    }
+  }
+}
+if (tabBc) tabBc.onmessage = function (e) { onTabMsg(e.data); };
+else window.addEventListener('storage', function (e) {
+  if (e.key !== 'drs_tabmsg' || !e.newValue) return;
+  try { onTabMsg(JSON.parse(e.newValue)); } catch (er) {}
+});
+tabSend({ type: 'claim' });
+
 computeView();
 renderAll();
 startDriverLoc();
 idbStart(function () {
   idbGet(K.out, function (saved) {
+    if (S.inactive) return;
     var have = {}, extra = [];
     S.out.forEach(function (o) { have[o.opId] = 1; });
     (saved || []).forEach(function (o) { if (o && o.opId && !have[o.opId]) extra.push(o); });
