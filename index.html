@@ -157,7 +157,7 @@ input.i:focus,textarea.i:focus{outline:none;border-color:var(--nav)}
 <script>
 'use strict';
 var DEFAULT_URL = '';
-var APP_VERSION = '2.2.1';
+var APP_VERSION = '2.3.0';
 var K = { cfg: 'drs_cfg', snap: 'drs_snap', out: 'drs_outbox', meta: 'drs_meta' };
 var IN_GAS = !!(window.google && google.script && google.script.run);
 
@@ -259,14 +259,14 @@ var toastT;
 function toast(msg, ms) { var t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(function () { t.classList.remove('show'); }, ms || 3200); }
 
 function destOf(s) {
-  if (hasPin(s)) return s.lat + ',' + s.lng;
+  if (hasPin(s)) return num(s.lat) + ',' + num(s.lng);
   if (!s.address) return '';
   var a = String(s.address);
   if (!/\b(mb|manitoba)\b/i.test(a)) a += ', MB, Canada';
   return encodeURIComponent(a);
 }
 function navUrl(s) { var d = destOf(s); return d ? 'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=' + d : ''; }
-function pinUrl(lat, lng) { return 'https://www.google.com/maps/search/?api=1&query=' + lat + ',' + lng; }
+function pinUrl(lat, lng) { return 'https://www.google.com/maps/search/?api=1&query=' + num(lat) + ',' + num(lng); }
 
 /** Coordinates from "49.81, -97.12" or a full Google Maps link. Short maps.app.goo.gl links can't be read offline. */
 function parseCoords(text) {
@@ -335,6 +335,8 @@ function applyLocal(stops, pats, sets, op) {
   } else if (op.type === 'pin') {
     upsertPatLocal(pats, op.patient, { lat: op.lat, lng: op.lng, address: op.address }, true);
     stops.forEach(function (x) { if (keyOf(x.patient) === keyOf(op.patient) && !isFinal(x.status)) { x.lat = op.lat; x.lng = op.lng; x._pending = true; } });
+  } else if (op.type === 'photo') {
+    s = findStop(stops, op.id); if (s) s._photoPending = true;
   } else if (op.type === 'settle') {
     var exp = 0, c = 0;
     op.ids.forEach(function (id) {
@@ -415,11 +417,17 @@ function sync() {
       throw new Error((res && (res.message || res.error)) || 'server');
     }
     var done = {};
+    var retryPhotos = [];
     (res.applied || []).forEach(function (a) {
       if (a.ok || a.permanent) done[a.opId] = true;
       if (!a.ok && a.permanent) toast('Could not save one change: ' + errText(a.error), 5000);
+      if (a.ok && a.photoRetry) {
+        // Delivery saved, but Google Drive did not take the photo this time: keep the photo and send it again on its own.
+        var orig = batch.filter(function (o) { return o.opId === a.opId; })[0];
+        if (orig && orig.photo) retryPhotos.push({ type: 'photo', opId: uid(), at: new Date().toISOString(), by: S.cfg.role || '', id: orig.id, photo: orig.photo });
+      }
     });
-    S.out = S.out.filter(function (o) { return !done[o.opId]; });
+    S.out = S.out.filter(function (o) { return !done[o.opId]; }).concat(retryPhotos);
     save(K.out, S.out);
     S.snap = res.data || S.snap; save(K.snap, S.snap);
     S.meta.lastSync = Date.now(); save(K.meta, S.meta);
@@ -438,7 +446,8 @@ function sync() {
 function errText(code) {
   return { not_found: 'that delivery no longer exists', cannot_resend: 'it is not marked as not delivered',
     already_delivered: 'it was already delivered', locked_cash_pending: 'cash for it is still with the driver',
-    cancelled: 'it was cancelled', missing_fields: 'details were missing' }[code] || code;
+    cancelled: 'it was cancelled', missing_fields: 'details were missing',
+    already_settled: 'that cash was already counted in on another computer', bad_photo: 'the photo was damaged' }[code] || code;
 }
 
 function enqueue(op) {
