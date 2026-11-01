@@ -157,7 +157,7 @@ input.i:focus,textarea.i:focus{outline:none;border-color:var(--nav)}
 <script>
 'use strict';
 var DEFAULT_URL = '';
-var APP_VERSION = '2.3.2';
+var APP_VERSION = '2.4.0';
 var K = { cfg: 'drs_cfg', snap: 'drs_snap', out: 'drs_outbox', meta: 'drs_meta' };
 var IN_GAS = !!(window.google && google.script && google.script.run);
 
@@ -397,6 +397,7 @@ function scheduleSync(ms) { clearTimeout(syncT); syncT = setTimeout(sync, ms == 
 
 function sync() {
   // pinBad: the team PIN was changed on the server. Sending waits until the new PIN is typed in; the app keeps working.
+  if (S.cfg.pinBad) checkOpen();
   if (!S.cfg.pin || S.cfg.pinBad || S.inactive) return Promise.resolve();
   if (S.syncing) { S.again = true; return Promise.resolve(); }
   S.syncing = true; renderPill();
@@ -619,10 +620,23 @@ function gateHtml() {
       '<div id="g-adv" class="' + (S.cfg.url ? 'hidden' : '') + '" style="margin-top:8px"><label class="f">Server address</label><textarea class="i" id="g-url" rows="3">' + esc(S.cfg.url) + '</textarea></div>' +
     '</div></div>';
 }
+// The pharmacy can switch the PIN off on the server (noPin() in Apps Script). Then phones unlock by themselves.
+function openUnlock() {
+  S.cfg.pin = 'open'; delete S.cfg.pinBad; saveCfg(); S.net = 'online';
+  closeSheet(); renderAll(); scheduleSync(50);
+}
+function checkOpen() {
+  if (S.openCheck && Date.now() - S.openCheck < 60000) return;
+  S.openCheck = Date.now();
+  callApi({ action: 'ping' }, 20000).then(function (r) {
+    if (r && r.ok && r.open && S.cfg.pinBad) { openUnlock(); toast('No PIN needed any more. Sending your saved changes.', 4000); }
+  }).catch(function () {});
+}
 function afterGate() {
   var msg = $('g-msg'); msg.textContent = 'Checking the server…';
   callApi({ action: 'ping' }, 20000).then(function (r) {
-    if (r && r.ok && !r.pinSet) {
+    if (r && r.ok && r.open) openUnlock();
+    else if (r && r.ok && !r.pinSet) {
       S.gateNew = true; $('g-new').classList.remove('hidden'); $('g-go').textContent = 'Create team PIN';
       msg.textContent = 'No team PIN yet. Pick one (4 or more digits) — everyone will use it.';
     } else msg.textContent = '';
@@ -663,7 +677,8 @@ function afterRepin() {
   msg.textContent = 'Checking the server…';
   callApi({ action: 'ping' }, 20000).then(function (r) {
     if (S.sh !== sh) return;
-    if (r && r.ok && !r.pinSet) {
+    if (r && r.ok && r.open) openUnlock();
+    else if (r && r.ok && !r.pinSet) {
       sh.isNew = true; $('rp-new').classList.remove('hidden'); $('rp-go').textContent = 'Create team PIN';
       msg.textContent = 'No team PIN yet. Pick one (4 or more digits) — everyone will use it.';
     } else msg.textContent = '';
