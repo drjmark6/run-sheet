@@ -157,7 +157,7 @@ input.i:focus,textarea.i:focus{outline:none;border-color:var(--nav)}
 <script>
 'use strict';
 var DEFAULT_URL = '';
-var APP_VERSION = '2.3.1';
+var APP_VERSION = '2.3.2';
 var K = { cfg: 'drs_cfg', snap: 'drs_snap', out: 'drs_outbox', meta: 'drs_meta' };
 var IN_GAS = !!(window.google && google.script && google.script.run);
 
@@ -267,6 +267,8 @@ function destOf(s) {
   return encodeURIComponent(a);
 }
 function navUrl(s) { var d = destOf(s); return d ? 'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=' + d : ''; }
+// iPhone: Apple Maps is always installed; Google Maps links fall back to Safari when the Google Maps app is not.
+function appleNavUrl(s) { var d = destOf(s); return d ? 'https://maps.apple.com/?dirflg=d&daddr=' + d : ''; }
 function pinUrl(lat, lng) { return 'https://www.google.com/maps/search/?api=1&query=' + num(lat) + ',' + num(lng); }
 
 /** Coordinates from "49.81, -97.12" or a full Google Maps link. Short maps.app.goo.gl links can't be read offline. */
@@ -817,7 +819,8 @@ function renderDriverList() {
       (s.note ? '<div class="stop-sub" style="color:var(--owe);font-weight:700">' + esc(s.note) + '</div>' : '') +
       stopTags(s) + '</div>' + amtHtml(s) + '</div>' +
       '<div class="stop-actions">' +
-        (nu ? '<a class="btn ghost sm" href="' + nu + '" target="_blank" rel="noopener">Navigate</a>' : '') +
+        (nu ? '<a class="btn ghost sm" href="' + nu + '" target="_blank" rel="noopener">' + (IS_IOS ? 'Google Maps' : 'Navigate') + '</a>' : '') +
+        (nu && IS_IOS ? '<a class="btn ghost sm apple-nav" href="' + appleNavUrl(s) + '" target="_blank" rel="noopener">Apple Maps</a>' : '') +
         (s.phone ? '<a class="btn ghost sm" href="tel:' + esc(String(s.phone).replace(/[^0-9+]/g, '')) + '">Call</a>' : '') +
         (!hasPin(s) ? '<button class="btn ghost sm" data-act="pin-here:' + esc(s.id) + '">Pin here</button>' : '') +
       '</div><div class="stop-actions"><button class="btn go full" data-act="complete:' + esc(s.id) + '">' + (owes ? 'Collect ' + cad(s.amount) + ' — finish' : 'Delivered — finish') + '</button></div></div>';
