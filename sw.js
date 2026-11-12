@@ -1,7 +1,7 @@
 // Delivery Run Sheet - keeps the app itself on the phone so it opens with no signal.
 // Data (deliveries, cash, photos) is NOT cached here; the app keeps that in its own storage
 // and talks to the Google server directly. Only this site's own files are handled.
-var CACHE = 'drs-app-2.4.0';
+var CACHE = 'drs-app-2.5.0';
 var FILES = ['./', 'index.html', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', function (e) {
@@ -23,7 +23,7 @@ self.addEventListener('fetch', function (e) {
       var net = fetch(req).then(function (res) {
         if (res && res.ok) c.put(key, res.clone());
         return res;
-      }).catch(function () { return hit; });
+      }).catch(function () { return hit || Response.error(); });
       return hit || net;
     });
   }));

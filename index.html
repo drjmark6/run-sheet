@@ -157,25 +157,35 @@ input.i:focus,textarea.i:focus{outline:none;border-color:var(--nav)}
 <script>
 'use strict';
 var DEFAULT_URL = '';
-var APP_VERSION = '2.4.0';
+var APP_VERSION = '2.5.0';
 var K = { cfg: 'drs_cfg', snap: 'drs_snap', out: 'drs_outbox', meta: 'drs_meta' };
 var IN_GAS = !!(window.google && google.script && google.script.run);
 
 /* ----------------------------------------------------------------- storage */
+// Two stores, same data. IndexedDB is the main one: big enough for queued photos and written with 'strict'
+// durability (flushed to the phone's storage before it reports done), so an app kill right after a save
+// loses nothing. localStorage keeps a copy of everything too, but without the photo data, because an iPhone
+// gives localStorage only about 5 MB; it lets the app draw instantly on start-up and covers a phone with no
+// IndexedDB. On start-up the two are merged by opId (see the end of this file). Sending a change twice is
+// harmless: every change has an id and the server ignores repeats.
 function load(k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
 function save(k, v) {
   if (S.inactive) return false; // another tab is in charge of saved data
-  if (k === K.out) idbPut(k, v);
-  try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; }
+  idbPut(k, v);
+  var ls = v;
+  if (k === K.out && IDB_STATE !== 'none') {
+    ls = v.map(function (op) { if (!op || !op.photo) return op; var c = Object.assign({}, op); delete c.photo; c.photoInIdb = true; return c; });
+  }
+  try { localStorage.setItem(k, JSON.stringify(ls)); return true; } catch (e) { return IDB_STATE === 'open'; }
 }
-// Unsent changes are also written to IndexedDB with 'strict' durability (flushed to the phone's storage
-// before it reports done). localStorage on Android can lose its last second of writes if the app is killed;
-// on start-up anything missing from localStorage is restored from here. Sending twice is harmless (every
-// change has an id and the server ignores repeats).
-var IDB = null, idbWaiting = [];
+var IDB = null, IDB_STATE = 'pending', idbWaiting = {};
 function idbPut(k, v) {
-  if (!IDB) { idbWaiting.push([k, v]); return; }
+  if (IDB_STATE !== 'open') { idbWaiting[k] = v; return; }
   try { var tx = IDB.transaction('kv', 'readwrite', { durability: 'strict' }); tx.objectStore('kv').put(JSON.stringify(v), k); } catch (e) {}
+}
+function idbDel(k) {
+  if (IDB_STATE !== 'open') { delete idbWaiting[k]; return; }
+  try { IDB.transaction('kv', 'readwrite').objectStore('kv')['delete'](k); } catch (e) {}
 }
 function idbGet(k, cb) {
   if (!IDB) return cb(null);
@@ -184,40 +194,52 @@ function idbGet(k, cb) {
     rq.onerror = function () { cb(null); };
   } catch (e) { cb(null); }
 }
+function idbGetMany(keys, cb) {
+  var out = {}, n = keys.length;
+  if (!n) return cb(out);
+  keys.forEach(function (k) { idbGet(k, function (v) { out[k] = v; if (--n === 0) cb(out); }); });
+}
 function idbStart(done) {
+  var finished = false, timer;
+  var finish = function (ok) { if (finished) return; finished = true; clearTimeout(timer); IDB_STATE = ok ? 'open' : 'none'; done(); };
   try {
-    if (!window.indexedDB) return done();
+    if (!window.indexedDB) return finish(false);
+    timer = setTimeout(function () { finish(false); }, 4000); // a store that never opens must not hold the app
     var r = indexedDB.open('drs', 1);
     r.onupgradeneeded = function () { try { r.result.createObjectStore('kv'); } catch (e) {} };
-    r.onsuccess = function () { IDB = r.result; done(); };
-    r.onerror = function () { done(); };
-    r.onblocked = function () { done(); };
-  } catch (e) { done(); }
+    r.onsuccess = function () { IDB = r.result; finish(true); };
+    r.onerror = function () { finish(false); };
+    r.onblocked = function () { finish(false); };
+  } catch (e) { finish(false); }
 }
 function uid() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
   return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
 }
 
+var LS_HAD = { cfg: !!load(K.cfg, null), snap: !!load(K.snap, null), meta: !!load(K.meta, null) };
 var S = {
   cfg: load(K.cfg, {}),
   snap: load(K.snap, null) || { stops: [], patients: [], settlements: [], driverLoc: null },
   out: load(K.out, []),
   meta: load(K.meta, { lastSync: 0 }),
-  tab: 'stops', filter: 'open', syncing: false, again: false, net: 'unknown', err: '',
-  cashSel: {}, acked: {}, inactive: false, lastFix: null, nearest: false, expanded: null, view: null, sh: null, add: {}
+  tab: 'stops', filter: 'open', syncing: false, again: false, net: 'unknown', err: '', busy: false,
+  cashSel: {}, acked: {}, inactive: false, lastFix: null, nearest: false, expanded: null, view: null, sh: null, add: {},
+  ready: false, backoff: 5000, lastTry: 0, sentRun: 0, sentAt: 0, fixWait: []
 };
+if (S.meta.fixWait) { S.fixWait = S.meta.fixWait; }
 // Setup link: ...#s=<server address>. Lets the iPhone home-screen app learn the server address
 // without it being written into the public copy of the app. The address stays in the link so
 // "Add to Home Screen" keeps it.
+var HASH_CFG = {};
 (function () {
   try {
     var m = /[#&]s=([^&]+)/.exec(location.hash || '');
     var u = m ? decodeURIComponent(m[1]) : '';
-    if (/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(u)) S.cfg.url = u;
+    if (/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(u)) { S.cfg.url = u; HASH_CFG.url = u; }
     // Role link: ...&r=driver or &r=pharmacy skips the "Who uses this phone?" question on first setup.
     var r = /[#&]r=(driver|pharmacy)\b/.exec(location.hash || '');
-    if (r && !S.cfg.role) S.cfg.role = r[1];
+    if (r && !S.cfg.role) { S.cfg.role = r[1]; HASH_CFG.role = r[1]; }
   } catch (e) {}
 })();
 if (!S.cfg.url) S.cfg.url = DEFAULT_URL;
@@ -314,7 +336,7 @@ function applyLocal(stops, pats, sets, op) {
   } else if (op.type === 'update') {
     s = findStop(stops, op.id); if (!s) return;
     f = op.fields || {};
-    ['patient', 'address', 'phone', 'note', 'seq'].forEach(function (k) { if (f[k] !== undefined) s[k] = f[k]; });
+    ['patient', 'address', 'phone', 'note', 'seq', 'driverNote'].forEach(function (k) { if (f[k] !== undefined) s[k] = f[k]; });
     if (f.amount !== undefined && !(s.status === 'delivered' && !s.settled)) s.amount = money(f.amount);
     if (f.lat && f.lng) { s.lat = f.lat; s.lng = f.lng; }
     if (f.status === 'pending' && (s.status === 'no_answer' || s.status === 'returned' || s.status === 'cancelled')) {
@@ -340,6 +362,9 @@ function applyLocal(stops, pats, sets, op) {
     stops.forEach(function (x) { if (keyOf(x.patient) === keyOf(op.patient) && !isFinal(x.status)) { x.lat = op.lat; x.lng = op.lng; x._pending = true; } });
   } else if (op.type === 'photo') {
     s = findStop(stops, op.id); if (s) s._photoPending = true;
+  } else if (op.type === 'drop') {
+    s = findStop(stops, op.id);
+    if (s && !s.dropLat) { s.dropLat = op.lat; s.dropLng = op.lng; if (!hasPin(s) && s.status === 'delivered') { s.lat = op.lat; s.lng = op.lng; } s._pending = true; }
   } else if (op.type === 'settle') {
     var exp = 0, c = 0;
     op.ids.forEach(function (id) {
@@ -366,8 +391,9 @@ function computeView() {
 }
 
 /* ------------------------------------------------------------------ syncing */
-function callApi(body, timeoutMs) {
+function callApi(body, timeoutMs, holder) {
   timeoutMs = timeoutMs || 45000;
+  holder = holder || {};
   if (IN_GAS) {
     return new Promise(function (res, rej) {
       var done = false;
@@ -380,6 +406,7 @@ function callApi(body, timeoutMs) {
   }
   var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
   var t = setTimeout(function () { if (ctl) ctl.abort(); }, timeoutMs);
+  holder.abort = function () { clearTimeout(t); if (ctl) ctl.abort(); };
   return fetch(S.cfg.url, {
     method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body),
     redirect: 'follow', credentials: 'omit', cache: 'no-store', signal: ctl ? ctl.signal : undefined
@@ -395,12 +422,21 @@ function callApi(body, timeoutMs) {
 var syncT;
 function scheduleSync(ms) { clearTimeout(syncT); syncT = setTimeout(sync, ms == null ? 300 : ms); }
 
+// How often to ask the server while the app is on screen. With changes waiting (or no signal) the phone retries
+// quickly and backs off to 30 s; idle, the driver checks every 30 s and the pharmacy PC every 20 s. A poll with
+// nothing new costs the server almost nothing (it answers "same" without reading the sheet).
+function syncDue() {
+  if (S.syncing || !S.cfg.pin || S.cfg.pinBad || S.inactive || document.visibilityState !== 'visible') return false;
+  var wait = (S.out.length || S.net === 'offline' || S.busy) ? S.backoff : (S.cfg.role === 'driver' ? 30000 : 20000);
+  return Date.now() - S.lastTry >= wait;
+}
+var syncCall = {};
 function sync() {
   // pinBad: the team PIN was changed on the server. Sending waits until the new PIN is typed in; the app keeps working.
   if (S.cfg.pinBad) checkOpen();
-  if (!S.cfg.pin || S.cfg.pinBad || S.inactive) return Promise.resolve();
+  if (!S.cfg.pin || S.cfg.pinBad || S.inactive || !S.ready) return Promise.resolve();
   if (S.syncing) { S.again = true; return Promise.resolve(); }
-  S.syncing = true; renderPill();
+  S.syncing = true; S.syncStart = Date.now(); S.lastTry = Date.now(); renderPill();
   // Upload size adapts to the signal: starts small, halves after a failed send, grows after a good one.
   // At least one change always goes, so a weak 2G line still moves the queue forward one photo at a time.
   var cap = S.batchMax || 250000, batch = [], size = 0;
@@ -410,9 +446,11 @@ function sync() {
     batch.push(S.out[i]); size += sz;
   }
   var body = { action: 'sync', pin: S.cfg.pin, ops: batch, device: S.cfg.device, role: S.cfg.role };
+  if (!batch.length && S.meta.rev) body.rev = S.meta.rev; // "anything new since this?"
   if (S.cfg.role === 'driver' && S.lastFix && Date.now() - S.lastFix.ts < 10 * 60000) body.loc = S.lastFix;
   var sentOps = batch.length;
-  return callApi(body, Math.min(180000, 30000 + Math.round(size / 3))).then(function (res) {
+  syncCall = {};
+  return callApi(body, Math.min(180000, 30000 + Math.round(size / 3)), syncCall).then(function (res) {
     if (!res || !res.ok) {
       if (res && (res.error === 'bad_pin' || res.error === 'pin_not_set')) {
         // Keep the run sheet on screen (the driver may be on the road with no signal); just stop sending.
@@ -420,7 +458,7 @@ function sync() {
         toast('The team PIN was changed. Enter the new PIN. Your saved work is kept.', 6000);
         return;
       }
-      throw new Error((res && (res.message || res.error)) || 'server');
+      var se = new Error((res && (res.message || res.error)) || 'server'); se.server = true; throw se;
     }
     var done = {};
     var retryPhotos = [];
@@ -433,21 +471,37 @@ function sync() {
         if (orig && orig.photo) retryPhotos.push({ type: 'photo', opId: uid(), at: new Date().toISOString(), by: S.cfg.role || '', id: orig.id, photo: orig.photo });
       }
     });
+    var hadQueue = S.out.length;
     S.out = S.out.filter(function (o) { return !done[o.opId]; }).concat(retryPhotos);
     save(K.out, S.out);
-    S.snap = res.data || S.snap; save(K.snap, S.snap);
+    if (res.same) { if (res.driverLoc) S.snap.driverLoc = res.driverLoc; }
+    else { S.snap = res.data || S.snap; }
+    save(K.snap, S.snap);
+    if (res.rev) S.meta.rev = res.rev;
     S.meta.lastSync = Date.now(); save(K.meta, S.meta);
-    S.net = 'online'; S.err = '';
-    if (sentOps) S.batchMax = Math.min(900000, cap * 2);
+    S.net = 'online'; S.err = ''; S.busy = false; S.backoff = 5000;
+    if (sentOps) { S.batchMax = Math.min(900000, cap * 2); S.sentRun += Object.keys(done).length; }
+    if (hadQueue && !S.out.length && S.sentRun) {
+      S.sentAt = Date.now();
+      toast('Sent ' + S.sentRun + ' change' + (S.sentRun === 1 ? '' : 's') + ' to the pharmacy.', 3500);
+      S.sentRun = 0;
+    }
   }).catch(function (e) {
     if (sentOps) S.batchMax = Math.max(40000, Math.floor(cap / 2));
-    S.net = 'offline';
+    if (e && e.server) { S.busy = true; S.net = 'online'; } // the server answered but could not work (busy, locked): not a signal problem
+    else { S.net = 'offline'; S.busy = false; }
+    S.backoff = Math.min(30000, S.backoff * 2);
     S.err = (e && e.notJson) ? 'The server address did not answer like the delivery app. Check the address in Settings.' : '';
   }).then(function () {
-    S.syncing = false;
+    S.syncing = false; syncCall = {};
     computeView(); renderDynamic();
-    if (S.again || (S.net === 'online' && S.out.length)) { S.again = false; scheduleSync(400); }
+    if (S.again || (S.net === 'online' && !S.busy && S.out.length)) { S.again = false; scheduleSync(400); }
   });
+}
+// A request left hanging while the app was in the background (the phone drops the connection without telling the
+// page) would block sending until its timeout. On return to the screen, anything older than 15 s is cut and restarted.
+function unstickSync() {
+  if (S.syncing && S.syncStart && Date.now() - S.syncStart > 15000 && syncCall.abort) { syncCall.abort(); S.again = true; }
 }
 function errText(code) {
   return { not_found: 'that delivery no longer exists', cannot_resend: 'it is not marked as not delivered',
@@ -462,18 +516,18 @@ function enqueue(op) {
   op.at = op.at || new Date().toISOString();
   op.by = S.cfg.role || '';
   S.out.push(op);
-  if (!save(K.out, S.out)) {
-    if (op.photo) { delete op.photo; op.photoDropped = true; save(K.out, S.out); toast('Phone storage is full — the photo was not kept, the rest is saved.', 5000); }
-    else toast('Phone storage is full. Connect to sync soon.', 5000);
-  }
+  if (!save(K.out, S.out)) toast('Phone storage is nearly full. The change is kept in memory; connect to send soon.', 5000);
   computeView(); renderDynamic();
   scheduleSync(250);
 }
+function findOp(opId) { for (var i = 0; i < S.out.length; i++) if (S.out[i].opId === opId) return S.out[i]; return null; }
 
 /* ---------------------------------------------------------------------- GPS */
 function getFix(timeout, maxAge) {
   return new Promise(function (res, rej) {
     if (!navigator.geolocation) return rej({ code: 9 });
+    // Callers that accept a recent fix (maxAge) get the watch's latest one at once while the watch is running.
+    if (gpsWatch != null && maxAge && S.lastFix && Date.now() - S.lastFix.ts < maxAge) return res(S.lastFix);
     navigator.geolocation.getCurrentPosition(function (p) {
       var f = { lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6), acc: Math.round(p.coords.accuracy || 0), ts: Date.now() };
       S.lastFix = f; res(f);
@@ -482,7 +536,7 @@ function getFix(timeout, maxAge) {
 }
 function gpsErrText(e) {
   var c = e && e.code;
-  if (c === 1) return 'Location is turned off for this app. Allow location in phone Settings > Apps > Delivery Run Sheet > Permissions, then tap Try again.';
+  if (c === 1) return IS_IOS ? 'Location is turned off for this app. Allow location: iPhone Settings > Privacy & Security > Location Services > Run Sheet (or Safari Websites) > While Using. Then tap Try again.' : 'Location is turned off for this app. Allow location in phone Settings > Apps > Delivery Run Sheet > Permissions, then tap Try again.';
   if (c === 9) return 'This device has no GPS.';
   return 'No GPS fix yet. Step away from the vehicle or building and tap Try again. GPS works without cell signal, it can just take up to a minute.';
 }
@@ -490,9 +544,80 @@ var locTimer;
 function startDriverLoc() {
   clearInterval(locTimer);
   if (S.cfg.role !== 'driver') return;
-  var tick = function () { if (document.visibilityState === 'visible') getFix(20000, 60000).catch(function () {}); };
+  // Keeps a recent fix in hand (so a finish screen opens with a location already), and tells the pharmacy where the driver is.
+  var tick = function () { if (document.visibilityState === 'visible' && gpsWatch == null) getFix(20000, 30000).catch(function () {}); };
   tick();
-  locTimer = setInterval(tick, 120000);
+  locTimer = setInterval(tick, 60000);
+}
+// While a finish/pin screen is open the phone watches GPS continuously: the first fix comes faster and gets more
+// accurate as the driver stands there. The watch also stays on for a while after a Save made without a fix, so the
+// pin can still be attached. GPS itself needs no cell signal.
+var gpsWatch = null, gpsWatchUntil = 0;
+function gpsOn(ms) {
+  gpsWatchUntil = Math.max(gpsWatchUntil, Date.now() + (ms || 60000));
+  if (gpsWatch != null || !navigator.geolocation) return;
+  try {
+    gpsWatch = navigator.geolocation.watchPosition(function (p) {
+      var f = { lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6), acc: Math.round(p.coords.accuracy || 0), ts: Date.now() };
+      S.lastFix = f; onFix(f);
+      if (Date.now() > gpsWatchUntil && !S.sh && !S.fixWait.length) gpsOff();
+    }, function (e) {
+      var sh = S.sh;
+      if (sh && !sh.fix) { sh.gpsBusy = false; sh.fixErr = e || { code: 2 }; refreshSheet(); }
+      if (e && e.code === 1) gpsOff(); // permission off: watching is pointless
+    }, { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 });
+  } catch (e) { gpsWatch = null; }
+}
+function gpsOff() { if (gpsWatch != null && navigator.geolocation) { try { navigator.geolocation.clearWatch(gpsWatch); } catch (e) {} } gpsWatch = null; }
+function gpsTick() { if (gpsWatch != null && !S.sh && (!S.fixWait.length || Date.now() > gpsWatchUntil)) gpsOff(); }
+function onFix(f) {
+  var sh = S.sh;
+  if (sh && (sh.kind === 'complete' || sh.kind === 'pin' || sh.kind === 'new')) {
+    // Take the new fix unless the one we have is fresher and tighter.
+    if (!sh.fix || f.acc <= sh.fix.acc || f.ts - sh.fix.ts > 20000) sh.fix = f;
+    sh.gpsBusy = f.acc > 25; sh.fixErr = null;
+    refreshSheet();
+  }
+  attachFix(f);
+}
+// A change saved before GPS answered: when the fix comes, write it into the change if it is still on the phone,
+// otherwise send a small follow-up (drop point for a delivery, pin for a new patient). Repeats are harmless.
+function waitForFix(w) {
+  w.started = Date.now(); w.until = w.started + 10 * 60000;
+  S.fixWait.push(w); saveWait();
+  gpsOn(10 * 60000);
+}
+function saveWait() { S.meta.fixWait = S.fixWait; save(K.meta, S.meta); }
+// Returns true when the change was still on the phone and got the coordinates written in.
+function applyWaiter(w, f) {
+  var op = findOp(w.opId);
+  if (op && op.type === 'complete') { op.lat = f.lat; op.lng = f.lng; return true; }
+  if (op && op.type === 'add') { op.stop.lat = f.lat; op.stop.lng = f.lng; return true; }
+  if (w.type === 'complete') enqueue({ type: 'drop', id: w.id, lat: f.lat, lng: f.lng });
+  else if (w.type === 'add') enqueue({ type: 'pin', patient: w.patient, lat: f.lat, lng: f.lng, address: w.address || '' });
+  return false;
+}
+function attachFix(f) {
+  if (!S.fixWait.length) return;
+  // A tight fix is taken at once; a rough one (over 150 m) only after a minute of trying.
+  var now = Date.now(), take = [], keep = [];
+  S.fixWait.forEach(function (w) { (f.acc <= 150 || now - w.started > 60000 ? take : keep).push(w); });
+  if (!take.length) return;
+  S.fixWait = keep; saveWait();
+  var touched = false;
+  take.forEach(function (w) { if (applyWaiter(w, f)) touched = true; });
+  if (touched) { save(K.out, S.out); computeView(); renderDynamic(); scheduleSync(250); }
+  if (!S.sh && !S.fixWait.length) gpsOff();
+  toast('GPS pin attached.', 2500);
+}
+// GPS never answered: after 10 minutes the last known position (if there was one) is used rather than nothing.
+function expireWaits() {
+  var now = Date.now(), late = S.fixWait.filter(function (w) { return now > w.until; });
+  if (!late.length) return;
+  S.fixWait = S.fixWait.filter(function (w) { return now <= w.until; }); saveWait();
+  var touched = false;
+  late.forEach(function (w) { if (w.fallback && applyWaiter(w, w.fallback)) touched = true; });
+  if (touched) { save(K.out, S.out); computeView(); renderDynamic(); scheduleSync(250); }
 }
 
 /* -------------------------------------------------------------------- photos */
@@ -501,12 +626,14 @@ function compressPhoto(file) {
     var url = URL.createObjectURL(file);
     var img = new Image();
     img.onload = function () {
-      var max = 720, w = img.naturalWidth, h = img.naturalHeight;
+      // 640 px on the long side at JPEG quality 0.45: a package on a doorstep stays readable at 50-90 KB,
+      // which still goes through on one bar of signal.
+      var max = 640, w = img.naturalWidth, h = img.naturalHeight;
       if (w > h && w > max) { h = Math.round(h * max / w); w = max; } else if (h > max) { w = Math.round(w * max / h); h = max; }
       var c = document.createElement('canvas'); c.width = w; c.height = h;
       c.getContext('2d').drawImage(img, 0, 0, w, h);
       URL.revokeObjectURL(url);
-      res(c.toDataURL('image/jpeg', 0.5));
+      res(c.toDataURL('image/jpeg', 0.45));
     };
     img.onerror = function () { URL.revokeObjectURL(url); rej(new Error('photo')); };
     img.src = url;
@@ -516,7 +643,27 @@ function compressPhoto(file) {
 /* --------------------------------------------------------------- derived sets */
 function V() { if (!S.view) computeView(); return S.view; }
 function openStops() { return V().stops.filter(function (s) { return s.status === 'pending'; }); }
-function notDelivered() { return V().stops.filter(function (s) { return s.status === 'no_answer' || s.status === 'returned'; }); }
+// The driver's list: today's deliveries first (then yesterday's leftovers, and so on), in the pharmacy's order within a day.
+function driverStops() {
+  var o = openStops().slice();
+  if (S.nearest && S.lastFix) {
+    o.sort(function (a, b) {
+      var da = hasPin(a) ? kmBetween(S.lastFix, { lat: num(a.lat), lng: num(a.lng) }) : 1e9;
+      var db = hasPin(b) ? kmBetween(S.lastFix, { lat: num(b.lat), lng: num(b.lng) }) : 1e9;
+      return da - db;
+    });
+    return o;
+  }
+  o.sort(function (a, b) {
+    var da = String(a.date || ''), db = String(b.date || '');
+    if (da !== db) return da < db ? 1 : -1;
+    var sa = num(a.seq) || 0, sb = num(b.seq) || 0;
+    if (sa !== sb) return sa - sb;
+    return String(a.created || '').localeCompare(String(b.created || ''));
+  });
+  return o;
+}
+function notDelivered() { return V().stops.filter(function (s) { return s.status === 'no_answer' || s.status === 'returned' || s.status === 'cancelled'; }); }
 function doneToday() { var t = today(); return V().stops.filter(function (s) { return isFinal(s.status) && s.status !== 'cancelled' && dayOf(s.deliveredAt) === t; }); }
 // Cash goes back to the pharmacy within CASH_DAYS days of the trip (one trip = one delivery day).
 var CASH_DAYS = 3;
@@ -577,16 +724,21 @@ function renderAll() {
 
 function renderPill() {
   var p = $('pill'); if (!p) return;
-  var n = S.out.length;
+  var n = S.out.length, stale = S.meta.lastSync && Date.now() - S.meta.lastSync > 10 * 60000;
   if (S.cfg.pinBad) { p.className = 'pill off'; p.innerHTML = '<span class="dot"></span>' + (n ? n + ' saved · PIN needed' : 'PIN needed'); }
   else if (S.syncing) { p.className = 'pill busy'; p.innerHTML = '<span class="dot"></span>' + (n ? 'Sending ' + n + '…' : 'Updating…'); }
-  else if (S.net === 'offline') { p.className = 'pill off'; p.innerHTML = '<span class="dot"></span>' + (n ? n + ' saved on phone' : 'No signal'); }
+  else if (S.net === 'offline') { p.className = 'pill off'; p.innerHTML = '<span class="dot"></span>' + (n ? 'No signal · ' + n + ' saved on phone' : 'No signal'); }
+  else if (S.busy) { p.className = 'pill off'; p.innerHTML = '<span class="dot"></span>' + (n ? 'Server busy · ' + n + ' saved on phone' : 'Server busy · retrying'); }
   else if (n) { p.className = 'pill off'; p.innerHTML = '<span class="dot"></span>' + n + ' saved on phone'; }
-  else { p.className = 'pill ok'; p.innerHTML = '<span class="dot"></span>' + (S.meta.lastSync ? 'Up to date' : 'Tap to update'); }
+  else if (!S.meta.lastSync) { p.className = 'pill ok'; p.innerHTML = '<span class="dot"></span>Tap to update'; }
+  else if (Date.now() - S.sentAt < 8000) { p.className = 'pill ok'; p.innerHTML = '<span class="dot"></span>Sent &#10003; Up to date'; }
+  else if (stale) { p.className = 'pill off'; p.innerHTML = '<span class="dot"></span>Last update ' + ago(S.meta.lastSync); }
+  else { p.className = 'pill ok'; p.innerHTML = '<span class="dot"></span>Up to date · ' + esc(timeOf(new Date(S.meta.lastSync).toISOString())); }
   var b = $('banner'); if (!b) return;
   if (S.cfg.pinBad) b.innerHTML = '<div class="banner err" id="pin-banner" data-act="repin" style="cursor:pointer">Team PIN changed — enter the new PIN. Tap here.' + (n ? ' ' + n + ' change' + (n > 1 ? 's are' : ' is') + ' saved on this phone and will send after that.' : '') + '</div>';
   else if (S.err) b.innerHTML = '<div class="banner err">' + esc(S.err) + '</div>';
   else if (S.net === 'offline') b.innerHTML = '<div class="banner off">No signal. Keep working — ' + (n ? n + ' change' + (n > 1 ? 's are' : ' is') + ' saved on this phone and' : 'changes are saved on this phone and') + ' will send by themselves. Last update ' + ago(S.meta.lastSync) + '.</div>';
+  else if (S.busy) b.innerHTML = '<div class="banner off">The server is busy. Keep working — ' + (n ? n + ' change' + (n > 1 ? 's are' : ' is') + ' saved on this phone and will send' : 'it will catch up') + ' in a moment.</div>';
   else b.innerHTML = '';
 }
 
@@ -655,7 +807,7 @@ function unlockWith(ids, isNew, done) {
   p.then(function () { return callApi({ action: 'sync', pin: pin, ops: [], device: S.cfg.device, role: S.cfg.role }, 45000); }).then(function (r) {
     if (!r.ok) { msg.textContent = r.error === 'bad_pin' ? 'Wrong PIN.' : r.error === 'locked' ? 'Too many wrong PINs. Wait 15 minutes, then try again.' : r.error === 'pin_not_set' ? 'No team PIN on the server yet. Close this and open it again to create one.' : 'Server problem: ' + (r.message || r.error); go.disabled = false; return; }
     S.cfg.pin = pin; delete S.cfg.pinBad; saveCfg();
-    S.snap = r.data; save(K.snap, S.snap); S.meta.lastSync = Date.now(); save(K.meta, S.meta); S.net = 'online';
+    S.snap = r.data; save(K.snap, S.snap); S.meta.lastSync = Date.now(); if (r.rev) S.meta.rev = r.rev; save(K.meta, S.meta); S.net = 'online';
     done(); if (S.out.length) scheduleSync(200);
   }).catch(function (e) {
     msg.textContent = (e && e.notJson) ? 'That server address is not answering like the delivery app.' : 'No signal. Connect once to unlock.';
@@ -730,24 +882,30 @@ function pharmShellHtml() {
 }
 function renderPharmList() {
   var list = $('list'); if (!list) return;
+  // Someone is typing in an opened delivery: do not rebuild the list under their fingers (the next update will).
+  var ae = document.activeElement;
+  if (S.expanded && ae && list.contains(ae) && /^(INPUT|TEXTAREA)$/.test(ae.tagName)) return;
   var o = openStops(), nd = notDelivered(), dt = doneToday();
   var all = V().stops;
-  $('chips').innerHTML = [['open', 'Not delivered yet', o.length], ['nd', 'Not delivered (failed)', nd.length], ['done', 'Done today', dt.length], ['all', 'All', all.length]]
+  var chips = [['open', 'Not delivered yet', o.length], ['nd', 'Failed / removed', nd.length], ['done', 'Done today', dt.length], ['all', 'All', all.length]]
     .map(function (c) { return '<button class="chip ' + (S.filter === c[0] ? 'on' : '') + '" data-act="filter:' + c[0] + '">' + c[1] + ' · ' + c[2] + '</button>'; }).join('');
+  if ($('chips')._h !== chips) { $('chips').innerHTML = chips; $('chips')._h = chips; }
   var rows = S.filter === 'nd' ? nd : S.filter === 'done' ? dt : S.filter === 'all' ? all.slice().reverse() : o;
-  if (!rows.length) { list.innerHTML = '<div class="empty">' + (S.filter === 'open' ? 'No deliveries waiting.' : 'Nothing here.') + '</div>'; return; }
-  list.innerHTML = rows.map(function (s, idx) {
+  var html;
+  if (!rows.length) html = '<div class="empty">' + (S.filter === 'open' ? 'No deliveries waiting.' : 'Nothing here.') + '</div>';
+  else html = rows.map(function (s, idx) {
     var open = S.expanded === s.id;
     var h = '<div class="stop s-' + esc(s.status) + '"><div class="stop-main" data-act="expand:' + esc(s.id) + '">' +
       '<div class="stop-body"><div class="stop-name">' + esc(s.patient) + '</div>' +
       '<div class="stop-sub">' + esc(s.address || (hasPin(s) ? 'Pinned location' : 'No address')) + (s.note ? ' · ' + esc(s.note) : '') + '</div>' +
       stopTags(s) + '</div>' + amtHtml(s) + '</div>';
-    if (s.status === 'no_answer' || s.status === 'returned') {
+    if (s.status === 'no_answer' || s.status === 'returned' || s.status === 'cancelled') {
       h += '<div class="stop-actions"><button class="btn go sm" data-act="resend:' + esc(s.id) + '">Send again with the driver</button></div>';
     }
     if (open) h += pharmEditHtml(s, idx, rows.length);
     return h + '</div>';
   }).join('');
+  if (list._h !== html) { list.innerHTML = html; list._h = html; }
 }
 function pharmEditHtml(s, idx, n) {
   var h = '<div class="stop-edit">';
@@ -758,6 +916,9 @@ function pharmEditHtml(s, idx, n) {
     if (s.driverNote) h += '<b>Driver note</b><span>' + esc(s.driverNote) + '</span>';
     h += '<b>Proof</b><span>' + (s.photoUrl ? '<a href="' + esc(s.photoUrl) + '" target="_blank" rel="noopener">Photo</a>' : (s._photoPending ? 'Photo uploading' : 'No photo')) +
       (s.dropLat ? ' · <a href="' + pinUrl(s.dropLat, s.dropLng) + '" target="_blank" rel="noopener">Drop point</a>' : '') + '</span></div>';
+  }
+  if (s.status === 'cancelled') {
+    h += '<div class="kv"><b>Result</b><span>Cancelled' + (s.driverNote ? ' · ' + esc(s.driverNote) : '') + '</span></div>';
   }
   if (!isFinal(s.status)) {
     h += '<label class="f">Address</label><input class="i mb" id="e-addr" value="' + esc(s.address) + '">' +
@@ -808,14 +969,7 @@ function driverShellHtml() {
 }
 function renderDriverList() {
   var list = $('list'); if (!list) return;
-  var o = openStops().slice(), dt = doneToday(), held = cashHeld();
-  if (S.nearest && S.lastFix) {
-    o.sort(function (a, b) {
-      var da = hasPin(a) ? kmBetween(S.lastFix, { lat: num(a.lat), lng: num(a.lng) }) : 1e9;
-      var db = hasPin(b) ? kmBetween(S.lastFix, { lat: num(b.lat), lng: num(b.lng) }) : 1e9;
-      return da - db;
-    });
-  }
+  var o = driverStops(), dt = doneToday(), held = cashHeld();
   var routable = o.filter(function (s) { return destOf(s); });
   var owed = o.reduce(function (t, s) { return t + num(s.amount); }, 0);
   var heldAmt = held.reduce(function (t, s) { return t + num(s.collected); }, 0);
@@ -825,34 +979,36 @@ function renderDriverList() {
     h += '<div class="row mb"><a class="btn nav grow" id="route" href="' + esc(routeUrl()) + '" target="_blank" rel="noopener">Route in Google Maps (' + Math.min(routable.length, 10) + ')</a>' +
       '<button class="btn ghost sm" data-act="nearest">' + (S.nearest ? 'List order' : 'Nearest first') + '</button></div>';
   }
-  $('dhead').innerHTML = h;
-  if (!o.length && !dt.length) { list.innerHTML = '<div class="empty">No deliveries waiting. New ones from the pharmacy appear here.</div>'; return; }
-  var html = o.map(function (s) {
-    var owes = num(s.amount) > 0, nu = navUrl(s);
-    return '<div class="stop s-pending"><div class="stop-main"><div class="stop-body"><div class="stop-name">' + esc(s.patient) + '</div>' +
-      '<div class="stop-sub">' + esc(s.address || (hasPin(s) ? 'Pinned location' : 'No address — ask the pharmacy or pin it')) + '</div>' +
-      (s.note ? '<div class="stop-sub" style="color:var(--owe);font-weight:700">' + esc(s.note) + '</div>' : '') +
-      stopTags(s) + '</div>' + amtHtml(s) + '</div>' +
-      '<div class="stop-actions">' +
-        (nu ? '<a class="btn ghost sm" href="' + nu + '" target="_blank" rel="noopener">' + (IS_IOS ? 'Google Maps' : 'Navigate') + '</a>' : '') +
-        (nu && IS_IOS ? '<a class="btn ghost sm apple-nav" href="' + appleNavUrl(s) + '" target="_blank" rel="noopener">Apple Maps</a>' : '') +
-        (s.phone ? '<a class="btn ghost sm" href="tel:' + esc(String(s.phone).replace(/[^0-9+]/g, '')) + '">Call</a>' : '') +
-        (!hasPin(s) ? '<button class="btn ghost sm" data-act="pin-here:' + esc(s.id) + '">Pin here</button>' : '') +
-      '</div><div class="stop-actions"><button class="btn go full" data-act="complete:' + esc(s.id) + '">' + (owes ? 'Collect ' + cad(s.amount) + ' — finish' : 'Delivered — finish') + '</button></div></div>';
-  }).join('');
-  if (dt.length) {
-    html += '<h3 style="margin:18px 2px 8px;font-size:15px;color:var(--ink2)">Done today · ' + dt.length + '</h3>' + dt.slice().reverse().map(function (s) {
-      return '<div class="stop s-' + esc(s.status) + '"><div class="stop-main"><div class="stop-body"><div class="stop-name">' + esc(s.patient) + '</div>' + stopTags(s) + '</div>' + amtHtml(s) + '</div></div>';
+  if ($('dhead')._h !== h) { $('dhead').innerHTML = h; $('dhead')._h = h; }
+  var html;
+  if (!o.length && !dt.length) html = '<div class="empty">No deliveries waiting. New ones from the pharmacy appear here.</div>';
+  else {
+    var lastDay = null;
+    html = o.map(function (s) {
+      var owes = num(s.amount) > 0, nu = navUrl(s), head = '';
+      if (!S.nearest && s.date !== lastDay) { lastDay = s.date; head = '<h3 style="margin:' + (s === o[0] ? '4px' : '18px') + ' 2px 8px;font-size:15px;color:var(--ink2)">' + (s.date === today() ? 'Today' : 'From ' + esc(niceDate(s.date))) + '</h3>'; }
+      return head + '<div class="stop s-pending"><div class="stop-main"><div class="stop-body"><div class="stop-name">' + esc(s.patient) + '</div>' +
+        '<div class="stop-sub">' + esc(s.address || (hasPin(s) ? 'Pinned location' : 'No address — ask the pharmacy or pin it')) + '</div>' +
+        (s.note ? '<div class="stop-sub" style="color:var(--owe);font-weight:700">' + esc(s.note) + '</div>' : '') +
+        stopTags(s) + '</div>' + amtHtml(s) + '</div>' +
+        '<div class="stop-actions">' +
+          (nu ? '<a class="btn ghost sm" href="' + nu + '" target="_blank" rel="noopener">' + (IS_IOS ? 'Google Maps' : 'Navigate') + '</a>' : '') +
+          (nu && IS_IOS ? '<a class="btn ghost sm apple-nav" href="' + appleNavUrl(s) + '" target="_blank" rel="noopener">Apple Maps</a>' : '') +
+          (s.phone ? '<a class="btn ghost sm" href="tel:' + esc(String(s.phone).replace(/[^0-9+]/g, '')) + '">Call</a>' : '') +
+          (!hasPin(s) ? '<button class="btn ghost sm" data-act="pin-here:' + esc(s.id) + '">Pin here</button>' : '') +
+        '</div><div class="stop-actions"><button class="btn go full" data-act="complete:' + esc(s.id) + '">' + (owes ? 'Collect ' + cad(s.amount) + ' — finish' : 'Delivered — finish') + '</button></div>' +
+        '<div class="stop-actions" style="padding-top:0"><button class="link" style="color:var(--bad);font-size:13px" data-act="drv-remove:' + esc(s.id) + '">Remove from my list</button></div></div>';
     }).join('');
+    if (dt.length) {
+      html += '<h3 style="margin:18px 2px 8px;font-size:15px;color:var(--ink2)">Done today · ' + dt.length + '</h3>' + dt.slice().reverse().map(function (s) {
+        return '<div class="stop s-' + esc(s.status) + '"><div class="stop-main"><div class="stop-body"><div class="stop-name">' + esc(s.patient) + '</div>' + stopTags(s) + '</div>' + amtHtml(s) + '</div></div>';
+      }).join('');
+    }
   }
-  list.innerHTML = html;
+  if (list._h !== html) { list.innerHTML = html; list._h = html; } // unchanged list: leave the screen alone (no flicker while scrolling)
 }
 function routeUrl() {
-  var pts = openStops().slice();
-  if (S.nearest && S.lastFix) pts.sort(function (a, b) {
-    return (hasPin(a) ? kmBetween(S.lastFix, { lat: num(a.lat), lng: num(a.lng) }) : 1e9) - (hasPin(b) ? kmBetween(S.lastFix, { lat: num(b.lat), lng: num(b.lng) }) : 1e9);
-  });
-  pts = pts.map(destOf).filter(Boolean).slice(0, 10);
+  var pts = driverStops().map(destOf).filter(Boolean).slice(0, 10);
   if (!pts.length) return '';
   var u = 'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=' + pts[pts.length - 1];
   if (pts.length > 1) u += '&waypoints=' + pts.slice(0, -1).join('%7C');
@@ -934,8 +1090,14 @@ function renderDriverTab() {
 }
 
 /* ------------------------------------------------------------------- sheets */
-function openSheet(state) { S.sh = state; var el = $('sheet'); el.classList.remove('hidden'); el.innerHTML = '<div class="sheet-in" id="sheet-in"></div>'; buildSheet(); }
-function closeSheet() { S.sh = null; var el = $('sheet'); el.classList.add('hidden'); el.innerHTML = ''; }
+function openSheet(state) {
+  S.sh = state;
+  if ((state.kind === 'complete' || state.kind === 'pin' || state.kind === 'new') && !state.fix && S.lastFix && Date.now() - S.lastFix.ts < 90000) {
+    state.stale = S.lastFix; // last known position, shown while GPS answers; only used as a last resort (see expireWaits)
+  }
+  var el = $('sheet'); el.classList.remove('hidden'); el.innerHTML = '<div class="sheet-in" id="sheet-in"></div>'; buildSheet();
+}
+function closeSheet() { S.sh = null; var el = $('sheet'); el.classList.add('hidden'); el.innerHTML = ''; if (!S.fixWait.length) gpsOff(); }
 
 function buildSheet() {
   var sh = S.sh, box = $('sheet-in'); if (!sh || !box) return;
@@ -974,7 +1136,7 @@ function buildSheet() {
       '<div class="card"><b>This phone is used by</b><div class="seg seg2" style="margin-top:10px"><button data-act="role:pharmacy" class="' + (S.cfg.role === 'pharmacy' ? 'on' : '') + '">Pharmacy</button><button data-act="role:driver" class="' + (S.cfg.role === 'driver' ? 'on' : '') + '">Driver</button></div></div>' +
       '<div class="card"><b>Sync</b><p class="muted">Last update: ' + ago(S.meta.lastSync) + ' · ' + S.out.length + ' change' + (S.out.length === 1 ? '' : 's') + ' waiting to send.</p><button class="btn ghost full" data-act="sync">Update now</button></div>' +
       '<div class="card"><label class="f">Server address</label><textarea class="i mb" id="st-url" rows="3">' + esc(S.cfg.url) + '</textarea><button class="btn ghost full" data-act="save-url">Save address</button></div>' +
-      '<div class="card"><button class="btn ghost full mb" data-act="lock">Lock this phone (asks for PIN again)</button>' +
+      '<div class="card">' + (S.cfg.pin === 'open' ? '' : '<button class="btn ghost full mb" data-act="lock">Lock this phone (asks for PIN again)</button>') +
       '<button class="btn bad full" data-act="wipe">Erase data on this phone</button>' +
       '<p class="muted">Version ' + APP_VERSION + (IN_GAS ? ' · web' : '') + '</p></div>';
   } else if (sh.kind === 'repin') {
@@ -993,15 +1155,19 @@ function buildSheet() {
 function grabGps() {
   var sh = S.sh; if (!sh) return;
   sh.gpsBusy = true; sh.fixErr = null; refreshSheet();
-  getFix(30000).then(function (f) { if (S.sh !== sh) return; sh.fix = f; sh.gpsBusy = false; refreshSheet(); })
-    .catch(function (e) { if (S.sh !== sh) return; sh.gpsBusy = false; sh.fixErr = e; refreshSheet(); });
+  gpsOn(3 * 60000);
+  // One direct request as well: on some phones the first watch reading takes longer than a single ask.
+  getFix(30000).then(function (f) { if (S.sh === sh) onFix(f); })
+    .catch(function (e) { if (S.sh !== sh || sh.fix) return; sh.gpsBusy = false; sh.fixErr = e; refreshSheet(); });
 }
 function refreshSheet() {
   var sh = S.sh; if (!sh || sh.kind === 'settings' || sh.kind === 'repin') return;
   var g = $('sh-gps');
   if (g) {
-    if (sh.fix) g.innerHTML = '<div class="gps ok">Location saved: ' + sh.fix.lat.toFixed(5) + ', ' + sh.fix.lng.toFixed(5) + ' (within ' + sh.fix.acc + ' m)' + (sh.gpsBusy ? ' · refreshing…' : '') + '</div>';
-    else if (sh.gpsBusy) g.innerHTML = '<div class="gps wait">Getting GPS location… (works without cell signal)</div>';
+    var canSaveNow = sh.kind === 'pin' ? '' : ' You can Save now; the pin attaches when GPS answers.';
+    if (sh.fix) g.innerHTML = '<div class="gps ok">Location saved: ' + sh.fix.lat.toFixed(5) + ', ' + sh.fix.lng.toFixed(5) + ' (within ' + sh.fix.acc + ' m)' + (sh.gpsBusy ? ' · refining…' : '') + '</div>';
+    else if (sh.gpsBusy && sh.stale) g.innerHTML = '<div class="gps wait">Last known position (' + Math.max(1, Math.round((Date.now() - sh.stale.ts) / 1000)) + ' s ago): ' + sh.stale.lat.toFixed(5) + ', ' + sh.stale.lng.toFixed(5) + ' · getting a fresh GPS fix…' + canSaveNow + '</div>';
+    else if (sh.gpsBusy) g.innerHTML = '<div class="gps wait">Getting GPS location… (works without cell signal)' + canSaveNow + '</div>';
     else if (sh.fixErr) g.innerHTML = '<div class="gps err">' + esc(gpsErrText(sh.fixErr)) + '</div>';
   }
   var mp = $('sh-map');
@@ -1024,8 +1190,13 @@ function refreshSheet() {
     saveBtn.textContent = need ? 'Type the amount received first' : 'Save';
   } else if (saveBtn) {
     var nameOk = sh.kind !== 'new' || ($('n-name') && $('n-name').value.trim());
-    saveBtn.disabled = !sh.fix || !nameOk;
-    saveBtn.textContent = !sh.fix ? 'Waiting for GPS…' : (!nameOk ? 'Type the patient name' : (sh.kind === 'new' ? 'Save patient and pin' : 'Save pin'));
+    if (sh.kind === 'pin') {
+      saveBtn.disabled = !sh.fix;
+      saveBtn.textContent = !sh.fix ? 'Waiting for GPS…' : 'Save pin';
+    } else {
+      saveBtn.disabled = !nameOk;
+      saveBtn.textContent = !nameOk ? 'Type the patient name' : (sh.fix ? 'Save patient and pin' : 'Save patient (pin when GPS answers)');
+    }
   }
 }
 function saveComplete() {
@@ -1034,9 +1205,11 @@ function saveComplete() {
   var op = { type: 'complete', id: s.id, status: sh.outcome || 'delivered', note: $('sh-note').value.trim(),
     lat: sh.fix ? sh.fix.lat : '', lng: sh.fix ? sh.fix.lng : '', photo: sh.photo || '' };
   if (owes && op.status === 'delivered') { op.collected = money(amt.value); op.method = sh.method || 'cash'; }
+  var noFix = !sh.fix;
   closeSheet();
   enqueue(op);
-  toast(op.status === 'delivered' ? 'Saved: ' + s.patient + ' delivered' + (op.collected ? ', ' + cad(op.collected) + ' ' + op.method : '') + '.' : 'Saved: ' + s.patient + ' not delivered.');
+  if (noFix) waitForFix({ type: 'complete', opId: op.opId, id: s.id, fallback: sh.stale || null });
+  toast((op.status === 'delivered' ? 'Saved: ' + s.patient + ' delivered' + (op.collected ? ', ' + cad(op.collected) + ' ' + op.method : '') + '.' : 'Saved: ' + s.patient + ' not delivered.') + (noFix ? ' GPS pin will attach when it answers.' : ''));
 }
 function savePin() {
   var sh = S.sh, s = findStop(V().stops, sh.id); if (!s || !sh.fix) return;
@@ -1045,15 +1218,16 @@ function savePin() {
   toast('Pinned ' + s.patient + '. Next time the route goes straight here.');
 }
 function saveNew() {
-  var sh = S.sh; if (!sh.fix) return;
+  var sh = S.sh;
   var name = $('n-name').value.trim(); if (!name) return;
-  var now = $('n-now').checked, id = uid();
+  var now = $('n-now').checked, id = uid(), fix = sh.fix || null, addr = $('n-addr').value.trim();
   var maxSeq = openStops().reduce(function (m, s) { return Math.max(m, num(s.seq)); }, 0);
-  enqueue({ type: 'add', stop: { id: id, created: new Date().toISOString(), date: today(), seq: String(maxSeq + 1), patient: name,
-    address: $('n-addr').value.trim(), amount: money($('n-amt').value), lat: sh.fix.lat, lng: sh.fix.lng, addedBy: 'driver' } });
-  var fix = sh.fix;
+  var op = { type: 'add', stop: { id: id, created: new Date().toISOString(), date: today(), seq: String(maxSeq + 1), patient: name,
+    address: addr, amount: money($('n-amt').value), lat: fix ? fix.lat : '', lng: fix ? fix.lng : '', addedBy: 'driver' } };
   closeSheet();
-  toast('Saved ' + name + ' with this location.');
+  enqueue(op);
+  if (!fix) waitForFix({ type: 'add', opId: op.opId, patient: name, address: addr, fallback: sh.stale || null });
+  toast(fix ? 'Saved ' + name + ' with this location.' : 'Saved ' + name + '. The pin attaches when GPS answers.');
   if (now) { openSheet({ kind: 'complete', id: id, fix: fix }); }
 }
 
@@ -1118,6 +1292,12 @@ document.addEventListener('click', function (e) {
     S.expanded = null; renderDynamic();
   }
   else if (cmd === 'resend') { enqueue({ type: 'update', id: arg, fields: { status: 'pending', date: today() } }); toast('Back on the driver\'s list.'); }
+  else if (cmd === 'drv-remove') {
+    var rs = findStop(V().stops, arg); if (!rs) return;
+    if (confirmBox('Remove ' + rs.patient + ' from your list? The pharmacy will see it as cancelled and can send it again.')) {
+      enqueue({ type: 'update', id: arg, fields: { status: 'cancelled', driverNote: 'Removed by driver' } }); toast('Removed ' + rs.patient + '.');
+    }
+  }
   else if (cmd === 'cancel-stop') { if (confirmBox('Cancel this delivery? It will leave the driver\'s list.')) { enqueue({ type: 'update', id: arg, fields: { status: 'cancelled' } }); S.expanded = null; } }
   else if (cmd === 'move') {
     var id = parts[1], dir = +parts[2], list = openStops(), i = -1;
@@ -1147,8 +1327,8 @@ document.addEventListener('click', function (e) {
   else if (cmd === 'wipe') {
     if (S.out.length && !confirmBox(S.out.length + ' changes have not been sent yet and will be lost. Erase anyway?')) return;
     if (!S.out.length && !confirmBox('Erase all delivery data on this phone? (The Google Sheet is not touched.)')) return;
-    [K.snap, K.out, K.meta].forEach(function (k) { try { localStorage.removeItem(k); } catch (er) {} });
-    S.snap = { stops: [], patients: [], settlements: [], driverLoc: null }; S.out = []; S.meta = { lastSync: 0 };
+    [K.snap, K.out, K.meta].forEach(function (k) { try { localStorage.removeItem(k); } catch (er) {} idbDel(k); });
+    S.snap = { stops: [], patients: [], settlements: [], driverLoc: null }; S.out = []; S.meta = { lastSync: 0 }; S.fixWait = [];
     closeSheet(); computeView(); renderAll(); sync();
   }
 });
@@ -1176,9 +1356,16 @@ document.addEventListener('keydown', function (e) {
 });
 $('sheet').addEventListener('click', function (e) { if (e.target.id === 'sheet') closeSheet(); });
 
-document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { scheduleSync(200); if (S.cfg.role === 'driver') getFix(20000).catch(function () {}); } });
-window.addEventListener('online', function () { scheduleSync(200); });
-setInterval(function () { if (document.visibilityState === 'visible') sync(); }, 60000);
+// Back on screen (iPhone has no background sending, so this is the moment that matters): cut a stuck request, send now.
+function onForeground() {
+  if (document.visibilityState !== 'visible') return;
+  unstickSync(); S.backoff = 5000; scheduleSync(200);
+  if (S.cfg.role === 'driver' && gpsWatch == null) getFix(20000, 30000).catch(function () {});
+}
+document.addEventListener('visibilitychange', onForeground);
+window.addEventListener('pageshow', onForeground);
+window.addEventListener('online', function () { S.backoff = 5000; scheduleSync(200); });
+setInterval(function () { if (syncDue()) sync(); gpsTick(); expireWaits(); }, 5000);
 setInterval(function () { if (S.cfg.pin && S.cfg.role && !S.sh) renderPill(); }, 30000);
 
 // Android back button closes an open panel instead of leaving the app.
@@ -1240,23 +1427,37 @@ tabSend({ type: 'claim' });
 computeView();
 renderAll();
 startDriverLoc();
+// Start-up merge of the two stores. Nothing is sent until this has run, so a change whose photo lives only in
+// IndexedDB is never sent without it.
 idbStart(function () {
-  idbGet(K.out, function (saved) {
+  idbGetMany([K.out, K.cfg, K.snap, K.meta], function (d) {
     if (S.inactive) return;
-    var have = {}, extra = [];
-    S.out.forEach(function (o) { have[o.opId] = 1; });
-    (saved || []).forEach(function (o) { if (o && o.opId && !have[o.opId]) extra.push(o); });
-    if (extra.length) {
-      S.out = S.out.concat(extra).sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); });
-      try { localStorage.setItem(K.out, JSON.stringify(S.out)); } catch (e) {}
-      computeView(); renderAll(); if (S.cfg.pin) scheduleSync(300);
-    }
-    var w = idbWaiting; idbWaiting = [];
-    idbPut(K.out, S.out);
-    w.length = 0;
+    var changed = false;
+    // Settings, the stop list and sync info come back from IndexedDB if localStorage was found empty
+    // (an iPhone low on space can clear localStorage and keep IndexedDB).
+    if ((!LS_HAD.cfg || !S.cfg.pin) && d[K.cfg] && d[K.cfg].pin && d[K.cfg].device) { S.cfg = Object.assign({}, d[K.cfg], HASH_CFG); changed = true; }
+    if (!LS_HAD.snap && d[K.snap] && d[K.snap].stops) { S.snap = d[K.snap]; changed = true; }
+    if (!LS_HAD.meta && d[K.meta]) { S.meta = d[K.meta]; if (S.meta.fixWait) S.fixWait = S.meta.fixWait; changed = true; }
+    // Unsent changes: the IndexedDB copy has the photos; anything only one store knows about is kept.
+    var full = {}, seen = {}, merged = [];
+    (d[K.out] || []).forEach(function (o) { if (o && o.opId) full[o.opId] = o; });
+    S.out.forEach(function (o) {
+      if (!o || !o.opId) return;
+      if (full[o.opId]) merged.push(full[o.opId]);
+      else { if (o.photoInIdb) { delete o.photoInIdb; o.photoDropped = true; } merged.push(o); }
+      seen[o.opId] = 1;
+    });
+    Object.keys(full).forEach(function (id) { if (!seen[id]) { merged.push(full[id]); changed = true; } });
+    merged.sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); });
+    S.out = merged;
+    var w = idbWaiting; idbWaiting = {};
+    Object.keys(w).forEach(function (k) { if (k !== K.out) idbPut(k, w[k]); });
+    save(K.out, S.out); saveCfg(); save(K.snap, S.snap); save(K.meta, S.meta);
+    S.ready = true;
+    if (changed) { computeView(); renderAll(); }
+    if (S.cfg.pin) scheduleSync(50);
   });
 });
-if (S.cfg.pin) scheduleSync(50);
 </script>
 </body>
 </html>
