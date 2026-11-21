@@ -642,7 +642,11 @@ function compressPhoto(file) {
 
 /* --------------------------------------------------------------- derived sets */
 function V() { if (!S.view) computeView(); return S.view; }
-function openStops() { return V().stops.filter(function (s) { return s.status === 'pending'; }); }
+// Lists only show the current week (Monday to Sunday). Older deliveries drop off the screen; cash still held is tracked separately and never hidden.
+function weekStart() { var d = new Date(); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+function thisWeek(s) { var d = s.date || dayOf(s.created) || today(); return d >= weekStart(); }
+function weekStops() { return V().stops.filter(thisWeek); }
+function openStops() { return weekStops().filter(function (s) { return s.status === 'pending'; }); }
 // The driver's list: today's deliveries first (then yesterday's leftovers, and so on), in the pharmacy's order within a day.
 function driverStops() {
   var o = openStops().slice();
@@ -663,7 +667,7 @@ function driverStops() {
   });
   return o;
 }
-function notDelivered() { return V().stops.filter(function (s) { return s.status === 'no_answer' || s.status === 'returned' || s.status === 'cancelled'; }); }
+function notDelivered() { return weekStops().filter(function (s) { return s.status === 'no_answer' || s.status === 'returned' || s.status === 'cancelled'; }); }
 function doneToday() { var t = today(); return V().stops.filter(function (s) { return isFinal(s.status) && s.status !== 'cancelled' && dayOf(s.deliveredAt) === t; }); }
 // Cash goes back to the pharmacy within CASH_DAYS days of the trip (one trip = one delivery day).
 var CASH_DAYS = 3;
@@ -886,7 +890,7 @@ function renderPharmList() {
   var ae = document.activeElement;
   if (S.expanded && ae && list.contains(ae) && /^(INPUT|TEXTAREA)$/.test(ae.tagName)) return;
   var o = openStops(), nd = notDelivered(), dt = doneToday();
-  var all = V().stops;
+  var all = weekStops();
   var chips = [['open', 'Not delivered yet', o.length], ['nd', 'Failed / removed', nd.length], ['done', 'Done today', dt.length], ['all', 'All', all.length]]
     .map(function (c) { return '<button class="chip ' + (S.filter === c[0] ? 'on' : '') + '" data-act="filter:' + c[0] + '">' + c[1] + ' · ' + c[2] + '</button>'; }).join('');
   if ($('chips')._h !== chips) { $('chips').innerHTML = chips; $('chips')._h = chips; }
